@@ -1,0 +1,21 @@
+[general]
+name=TOFPA
+qgisMinimumVersion=3.0
+description=Takeoff and Final Approach Analysis Tool
+version=0.1
+author=FLYGHT7
+email=info@example.com
+
+about=This plugin creates Takeoff and Final Approach surfaces for runway analysis.
+
+tracker=https://github.com/FLYGHT7/tofpa/issues
+repository=https://github.com/FLYGHT7/tofpa
+
+hasProcessingProvider=no
+tags=python,airports,aviation,runway,ICAO
+
+homepage=http://www.flyght7.com
+category=Vector
+icon=icon.png
+experimental=True
+deprecated=False
