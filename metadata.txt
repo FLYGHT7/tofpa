@@ -2,19 +2,19 @@
 name=TOFPA
 qgisMinimumVersion=3.0
 description=Takeoff and Final Approach Analysis Tool
-version=0.1
-author=FLYGHT7
-email=info@example.com
+version=0.2
+author=Your Name
+email=your.email@example.com
 
-about=This plugin creates Takeoff and Final Approach surfaces for runway analysis.
+about=This plugin creates Takeoff and Final Approach surfaces for runway analysis. Features include layer selection, KMZ export, and customizable elevation parameters.
 
-tracker=https://github.com/FLYGHT7/tofpa/issues
-repository=https://github.com/FLYGHT7/tofpa
+tracker=http://bugs
+repository=http://repo
 
 hasProcessingProvider=no
-tags=python,airports,aviation,runway,ICAO
+tags=python,airports,aviation,runway,kmz,google earth
 
-homepage=http://www.flyght7.com
+homepage=http://homepage
 category=Vector
 icon=icon.png
 experimental=True

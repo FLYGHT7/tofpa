@@ -1,6 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 /***************************************************************************
+ TOFPA
+                                 A QGIS plugin
+ Takeoff and Final Approach Analysis Tool
+                             -------------------
+        begin                : 2025-5-5
+        copyright            : (C) 2025
+        email                : your.email@example.com
+ ***************************************************************************/
+
+/***************************************************************************
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
  *   it under the terms of the GNU General Public License as published by  *
