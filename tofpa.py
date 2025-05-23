@@ -83,44 +83,7 @@ class TOFPA:
         status_tip=None,
         whats_this=None,
         parent=None):
-        """Add a toolbar icon to the toolbar.
-        
-        :param icon_path: Path to the icon for this action. Can be a resource
-            path (e.g. ':/plugins/foo/bar.png') or a normal file system path.
-        :type icon_path: str
-        
-        :param text: Text that should be shown in menu items for this action.
-        :type text: str
-        
-        :param callback: Function to be called when the action is triggered.
-        :type callback: function
-        
-        :param enabled_flag: A flag indicating if the action should be enabled
-            by default. Defaults to True.
-        :type enabled_flag: bool
-        
-        :param add_to_menu: Flag indicating whether the action should also
-            be added to the menu. Defaults to True.
-        :type add_to_menu: bool
-        
-        :param add_to_toolbar: Flag indicating whether the action should also
-            be added to the toolbar. Defaults to True.
-        :type add_to_toolbar: bool
-        
-        :param status_tip: Optional text to show in a popup when mouse pointer
-            hovers over the action.
-        :type status_tip: str
-        
-        :param parent: Parent widget for the new action. Defaults None.
-        :type parent: QWidget
-        
-        :param whats_this: Optional text to show in the status bar when the
-            mouse pointer hovers over the action.
-        
-        :returns: The action that was created. Note that the action is also
-            added to self.actions list.
-        :rtype: QAction
-        """
+        """Add a toolbar icon to the toolbar."""
 
         icon = QIcon(icon_path)
         action = QAction(icon, text, parent)
@@ -202,6 +165,45 @@ class TOFPA:
         if success:
             self.iface.messageBar().pushMessage("TOFPA:", "TakeOff Climb Surface Calculation Finished", level=Qgis.Success)
 
+    def get_single_feature(self, layer, use_selected_feature, feature_type="feature"):
+        """
+        Get a single feature from the layer following the new selection logic.
+        Returns the feature if successful, None if error (with error message displayed).
+        """
+        if use_selected_feature and layer.selectedFeatureCount() > 0:
+            # User wants to use selected features
+            selected_features = layer.selectedFeatures()
+            if len(selected_features) == 1:
+                return selected_features[0]
+            elif len(selected_features) > 1:
+                self.iface.messageBar().pushMessage(
+                    "Error", 
+                    f"Please select only one {feature_type}", 
+                    level=Qgis.Critical
+                )
+                return None
+        else:
+            # No selection or not using selection - use all features
+            all_features = list(layer.getFeatures())
+            if len(all_features) == 1:
+                return all_features[0]
+            elif len(all_features) > 1:
+                self.iface.messageBar().pushMessage(
+                    "Error", 
+                    f"Please select one {feature_type}", 
+                    level=Qgis.Critical
+                )
+                return None
+            elif len(all_features) == 0:
+                self.iface.messageBar().pushMessage(
+                    "Error", 
+                    f"No {feature_type}s found in the selected layer!", 
+                    level=Qgis.Critical
+                )
+                return None
+        
+        return None
+
     def create_tofpa_surface(self, width_tofpa, max_width_tofpa, cwy_length, z0, ze, s, 
                             runway_layer_id, threshold_layer_id, use_selected_feature, export_kmz):
         """Create the TOFPA surface with the given parameters"""
@@ -220,35 +222,28 @@ class TOFPA:
             self.iface.messageBar().pushMessage("Error", "Selected runway layer not found!", level=Qgis.Critical)
             return False
         
-        # Get runway feature
-        if use_selected_feature and runway_layer.selectedFeatureCount() > 0:
-            selection = runway_layer.selectedFeatures()
-        else:
-            # If no selection or not using selection, use all features
-            selection = list(runway_layer.getFeatures())
-        
-        if not selection:
-            self.iface.messageBar().pushMessage("Error", "No runway features found in the selected layer!", level=Qgis.Critical)
+        # Get single runway feature using new logic
+        runway_feature = self.get_single_feature(runway_layer, use_selected_feature, "runway feature")
+        if not runway_feature:
             return False
         
         # Get runway geometry
-        rwy_geom = selection[0].geometry()
+        rwy_geom = runway_feature.geometry()
         rwy_length = rwy_geom.length()
         rwy_slope = (z0-ze)/rwy_length if rwy_length > 0 else 0
         print(f"Runway length: {rwy_length}")
         
         # Get the azimuth of the line
-        for feat in selection:
-            geom = feat.geometry().asPolyline()
-            # Verificar que el índice es válido
-            if len(geom) <= abs(s):
-                self.iface.messageBar().pushMessage("Error", "Runway geometry is too short for the selected direction!", level=Qgis.Critical)
-                return False
-                
-            start_point = QgsPoint(geom[-1-s])
-            end_point = QgsPoint(geom[s])
-            angle0 = start_point.azimuth(end_point)
-            back_angle0 = angle0+180
+        geom = runway_feature.geometry().asPolyline()
+        # Verificar que el índice es válido
+        if len(geom) <= abs(s):
+            self.iface.messageBar().pushMessage("Error", "Runway geometry is too short for the selected direction!", level=Qgis.Critical)
+            return False
+            
+        start_point = QgsPoint(geom[-1-s])
+        end_point = QgsPoint(geom[s])
+        angle0 = start_point.azimuth(end_point)
+        back_angle0 = angle0+180
         
         # Initial true azimuth data
         azimuth = angle0+s2
@@ -260,21 +255,14 @@ class TOFPA:
             self.iface.messageBar().pushMessage("Error", "Selected threshold layer not found!", level=Qgis.Critical)
             return False
         
-        # Get threshold feature
-        if use_selected_feature and threshold_layer.selectedFeatureCount() > 0:
-            selection = threshold_layer.selectedFeatures()
-        else:
-            # If no selection or not using selection, use all features
-            selection = list(threshold_layer.getFeatures())
-        
-        if not selection:
-            self.iface.messageBar().pushMessage("Error", "No threshold features found in the selected layer!", level=Qgis.Critical)
+        # Get single threshold feature using new logic
+        threshold_feature = self.get_single_feature(threshold_layer, use_selected_feature, "threshold feature")
+        if not threshold_feature:
             return False
         
         # Get threshold point
-        for feat in selection:
-            new_geom = QgsPoint(feat.geometry().asPoint())
-            new_geom.addZValue(z0)
+        new_geom = QgsPoint(threshold_feature.geometry().asPoint())
+        new_geom.addZValue(z0)
         
         list_pts = []
         
@@ -355,7 +343,7 @@ class TOFPA:
         return True
     
     def export_to_kmz(self, layer):
-        """Export the layer to KMZ format for Google Earth"""
+        """Export the layer to KMZ format for Google Earth with proper styling"""
         # Verificar que la capa tiene características
         if layer.featureCount() == 0:
             self.iface.messageBar().pushMessage(
@@ -387,7 +375,7 @@ class TOFPA:
         if not file_path.lower().endswith('.kmz'):
             file_path += '.kmz'
         
-        # Set up KML options
+        # Set up KML options with proper styling
         options = QgsVectorFileWriter.SaveVectorOptions()
         options.driverName = "KML"
         options.layerName = layer.name()
@@ -416,6 +404,62 @@ class TOFPA:
                 level=Qgis.Critical
             )
             return False
+        
+        # Read the generated KML and modify it to include proper styling
+        try:
+            with open(temp_kml, 'r', encoding='utf-8') as f:
+                kml_content = f.read()
+            
+            # Add proper styling for Google Earth
+            # Red color, not filled, clamped to ground
+            style_section = '''
+    <Style id="RWY_TOFPA_AOC_TypeA_Style">
+        <LineStyle>
+            <color>ff0000ff</color>
+            <width>2</width>
+        </LineStyle>
+        <PolyStyle>
+            <color>00000000</color>
+            <fill>0</fill>
+            <outline>1</outline>
+        </PolyStyle>
+    </Style>'''
+            
+            # Insert style after the Document tag
+            kml_content = kml_content.replace(
+                '<Document>',
+                f'<Document>{style_section}'
+            )
+            
+            # Add styleUrl to Placemark and set altitudeMode to clampToGround
+            kml_content = kml_content.replace(
+                '<Placemark>',
+                '<Placemark><styleUrl>#RWY_TOFPA_AOC_TypeA_Style</styleUrl>'
+            )
+            
+            # Set altitude mode to clampToGround for all coordinates
+            kml_content = kml_content.replace(
+                '<altitudeMode>absolute</altitudeMode>',
+                '<altitudeMode>clampToGround</altitudeMode>'
+            )
+            
+            # If no altitudeMode exists, add it
+            if '<altitudeMode>' not in kml_content:
+                kml_content = kml_content.replace(
+                    '<Polygon>',
+                    '<Polygon><altitudeMode>clampToGround</altitudeMode>'
+                )
+            
+            # Write the modified KML
+            with open(temp_kml, 'w', encoding='utf-8') as f:
+                f.write(kml_content)
+                
+        except Exception as e:
+            self.iface.messageBar().pushMessage(
+                "Warning", 
+                f"Could not modify KML styling: {str(e)}", 
+                level=Qgis.Warning
+            )
         
         # Convert KML to KMZ (zip the KML file)
         import zipfile
