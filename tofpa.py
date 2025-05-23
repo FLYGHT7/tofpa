@@ -1,6 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 /***************************************************************************
+ TOFPA
+                                 A QGIS plugin
+ Takeoff and Final Approach Analysis Tool
+                              -------------------
+        begin                : 2024-04-14
+        copyright            : (C) 2024
+        email                : your.email@example.com
+ ***************************************************************************/
+
+/***************************************************************************
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
  *   it under the terms of the GNU General Public License as published by  *
@@ -9,12 +19,13 @@
  *                                                                         *
  ***************************************************************************/
 """
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
-from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction
-from qgis.core import QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry, QgsPoint, QgsField, QgsPolygon, QgsLineString, Qgis, QgsFillSymbol
-from qgis.PyQt.QtCore import QVariant
-from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QVariant
+from qgis.PyQt.QtGui import QIcon, QColor
+from qgis.PyQt.QtWidgets import QAction, QFileDialog
+from qgis.core import (QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry, 
+                      QgsPoint, QgsField, QgsPolygon, QgsLineString, Qgis, 
+                      QgsFillSymbol, QgsVectorFileWriter, QgsCoordinateTransform,
+                      QgsCoordinateReferenceSystem)
 
 import os.path
 from math import *
@@ -72,44 +83,7 @@ class TOFPA:
         status_tip=None,
         whats_this=None,
         parent=None):
-        """Add a toolbar icon to the toolbar.
-        
-        :param icon_path: Path to the icon for this action. Can be a resource
-            path (e.g. ':/plugins/foo/bar.png') or a normal file system path.
-        :type icon_path: str
-        
-        :param text: Text that should be shown in menu items for this action.
-        :type text: str
-        
-        :param callback: Function to be called when the action is triggered.
-        :type callback: function
-        
-        :param enabled_flag: A flag indicating if the action should be enabled
-            by default. Defaults to True.
-        :type enabled_flag: bool
-        
-        :param add_to_menu: Flag indicating whether the action should also
-            be added to the menu. Defaults to True.
-        :type add_to_menu: bool
-        
-        :param add_to_toolbar: Flag indicating whether the action should also
-            be added to the toolbar. Defaults to True.
-        :type add_to_toolbar: bool
-        
-        :param status_tip: Optional text to show in a popup when mouse pointer
-            hovers over the action.
-        :type status_tip: str
-        
-        :param parent: Parent widget for the new action. Defaults None.
-        :type parent: QWidget
-        
-        :param whats_this: Optional text to show in the status bar when the
-            mouse pointer hovers over the action.
-        
-        :returns: The action that was created. Note that the action is also
-            added to self.actions list.
-        :rtype: QAction
-        """
+        """Add a toolbar icon to the toolbar."""
 
         icon = QIcon(icon_path)
         action = QAction(icon, text, parent)
@@ -163,7 +137,7 @@ class TOFPA:
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start == True:
             self.first_start = False
-            self.dlg = TOFPADialog(self.iface.mainWindow())
+            self.dlg = TOFPADialog(self.iface.mainWindow(), self.iface)
             self.dlg.accepted.connect(self.on_dialog_accepted)
         
         # Show the dialog
@@ -181,13 +155,57 @@ class TOFPA:
             params['cwy_length'],
             params['z0'],
             params['ze'],
-            params['s']
+            params['s'],
+            params['runway_layer_id'],
+            params['threshold_layer_id'],
+            params['use_selected_feature'],
+            params['export_kmz']
         )
         
         if success:
             self.iface.messageBar().pushMessage("TOFPA:", "TakeOff Climb Surface Calculation Finished", level=Qgis.Success)
 
-    def create_tofpa_surface(self, width_tofpa, max_width_tofpa, cwy_length, z0, ze, s):
+    def get_single_feature(self, layer, use_selected_feature, feature_type="feature"):
+        """
+        Get a single feature from the layer following the new selection logic.
+        Returns the feature if successful, None if error (with error message displayed).
+        """
+        if use_selected_feature and layer.selectedFeatureCount() > 0:
+            # User wants to use selected features
+            selected_features = layer.selectedFeatures()
+            if len(selected_features) == 1:
+                return selected_features[0]
+            elif len(selected_features) > 1:
+                self.iface.messageBar().pushMessage(
+                    "Error", 
+                    f"Please select only one {feature_type}", 
+                    level=Qgis.Critical
+                )
+                return None
+        else:
+            # No selection or not using selection - use all features
+            all_features = list(layer.getFeatures())
+            if len(all_features) == 1:
+                return all_features[0]
+            elif len(all_features) > 1:
+                self.iface.messageBar().pushMessage(
+                    "Error", 
+                    f"Please select one {feature_type}", 
+                    level=Qgis.Critical
+                )
+                return None
+            elif len(all_features) == 0:
+                self.iface.messageBar().pushMessage(
+                    "Error", 
+                    f"No {feature_type}s found in the selected layer!", 
+                    level=Qgis.Critical
+                )
+                return None
+        
+        return None
+
+    def create_tofpa_surface(self, width_tofpa, max_width_tofpa, cwy_length, z0, ze, s, 
+                            runway_layer_id, threshold_layer_id, use_selected_feature, export_kmz):
         """Create the TOFPA surface with the given parameters"""
         
         # Calculate s2 based on s
@@ -198,55 +216,53 @@ class TOFPA:
         
         map_srid = self.iface.mapCanvas().mapSettings().destinationCrs().authid()
         
-        # Find runway layer and get selected feature
-        runway_layer = None
-        for layer in QgsProject.instance().mapLayers().values():
-            if "runway" in layer.name():
-                runway_layer = layer
-                break
-        
+        # Get runway layer by ID
+        runway_layer = QgsProject.instance().mapLayer(runway_layer_id)
         if not runway_layer:
-            self.iface.messageBar().pushMessage("Error", "No runway layer found! Please make sure a layer with 'runway' in its name exists.", level=Qgis.Critical)
+            self.iface.messageBar().pushMessage("Error", "Selected runway layer not found!", level=Qgis.Critical)
             return False
         
-        selection = runway_layer.selectedFeatures()
-        if not selection:
-            self.iface.messageBar().pushMessage("Error", "No runway selected! Please select a runway feature first.", level=Qgis.Critical)
+        # Get single runway feature using new logic
+        runway_feature = self.get_single_feature(runway_layer, use_selected_feature, "runway feature")
+        if not runway_feature:
             return False
         
         # Get runway geometry
-        rwy_geom = selection[0].geometry()
+        rwy_geom = runway_feature.geometry()
         rwy_length = rwy_geom.length()
         rwy_slope = (z0-ze)/rwy_length if rwy_length > 0 else 0
         print(f"Runway length: {rwy_length}")
         
         # Get the azimuth of the line
-        for feat in selection:
-            geom = feat.geometry().asPolyline()
-            start_point = QgsPoint(geom[-1-s])
-            end_point = QgsPoint(geom[s])
-            angle0 = start_point.azimuth(end_point)
-            back_angle0 = angle0+180
+        geom = runway_feature.geometry().asPolyline()
+        # Verificar que el índice es válido
+        if len(geom) <= abs(s):
+            self.iface.messageBar().pushMessage("Error", "Runway geometry is too short for the selected direction!", level=Qgis.Critical)
+            return False
+            
+        start_point = QgsPoint(geom[-1-s])
+        end_point = QgsPoint(geom[s])
+        angle0 = start_point.azimuth(end_point)
+        back_angle0 = angle0+180
         
         # Initial true azimuth data
         azimuth = angle0+s2
         bazimuth = azimuth+180
         
-        # Get the threshold point from active layer
-        layer = self.iface.activeLayer()
-        if not layer:
-            self.iface.messageBar().pushMessage("Error", "No active layer! Please select a layer with threshold points.", level=Qgis.Critical)
+        # Get the threshold point from selected layer
+        threshold_layer = QgsProject.instance().mapLayer(threshold_layer_id)
+        if not threshold_layer:
+            self.iface.messageBar().pushMessage("Error", "Selected threshold layer not found!", level=Qgis.Critical)
             return False
         
-        selection = layer.selectedFeatures()
-        if not selection:
-            self.iface.messageBar().pushMessage("Error", "No threshold point selected! Please select a point in the active layer.", level=Qgis.Critical)
+        # Get single threshold feature using new logic
+        threshold_feature = self.get_single_feature(threshold_layer, use_selected_feature, "threshold feature")
+        if not threshold_feature:
             return False
         
         # Get threshold point
-        for feat in selection:
-            new_geom = QgsPoint(feat.geometry().asPoint())
-            new_geom.addZValue(z0)
+        new_geom = QgsPoint(threshold_feature.geometry().asPoint())
+        new_geom.addZValue(z0)
         
         list_pts = []
         
@@ -308,12 +324,15 @@ class TOFPA:
         v_layer.renderer().setSymbol(symbol)
         v_layer.triggerRepaint()
         
+        # Export to KMZ if requested
+        if export_kmz:
+            self.export_to_kmz(v_layer)
+        
         # Zoom to layer
         v_layer.selectAll()
         canvas = self.iface.mapCanvas()
         canvas.zoomToSelected(v_layer)
         v_layer.removeSelection()
-        layer.removeSelection()
         
         # Get canvas scale
         sc = canvas.scale()
@@ -322,3 +341,160 @@ class TOFPA:
         canvas.zoomScale(sc)
         
         return True
+    
+    def export_to_kmz(self, layer):
+        """Export the layer to KMZ format for Google Earth with proper styling"""
+        # Verificar que la capa tiene características
+        if layer.featureCount() == 0:
+            self.iface.messageBar().pushMessage(
+                "Error", 
+                "No features to export in the layer", 
+                level=Qgis.Critical
+            )
+            return False
+            
+        # Ask user for save location
+        file_dialog = QFileDialog()
+        file_dialog.setDefaultSuffix('kmz')
+        file_path, _ = file_dialog.getSaveFileName(
+            None, 
+            "Save KMZ File", 
+            "", 
+            "KMZ Files (*.kmz)"
+        )
+        
+        if not file_path:
+            self.iface.messageBar().pushMessage(
+                "Info", 
+                "KMZ export cancelled by user", 
+                level=Qgis.Info
+            )
+            return False  # User cancelled
+        
+        # Ensure file has .kmz extension
+        if not file_path.lower().endswith('.kmz'):
+            file_path += '.kmz'
+        
+        # Set up KML options with proper styling
+        options = QgsVectorFileWriter.SaveVectorOptions()
+        options.driverName = "KML"
+        options.layerName = layer.name()
+        
+        # KML uses EPSG:4326 (WGS84)
+        crs_4326 = QgsCoordinateReferenceSystem("EPSG:4326")
+        options.ct = QgsCoordinateTransform(
+            layer.crs(), 
+            crs_4326, 
+            QgsProject.instance()
+        )
+        
+        # Write to KML first (will be converted to KMZ)
+        temp_kml = file_path.replace('.kmz', '.kml')
+        result = QgsVectorFileWriter.writeAsVectorFormatV2(
+            layer,
+            temp_kml,
+            QgsProject.instance().transformContext(),
+            options
+        )
+        
+        if result[0] != QgsVectorFileWriter.NoError:
+            self.iface.messageBar().pushMessage(
+                "Error", 
+                f"Failed to export to KML: {result[1]}", 
+                level=Qgis.Critical
+            )
+            return False
+        
+        # Read the generated KML and modify it to include proper styling
+        try:
+            with open(temp_kml, 'r', encoding='utf-8') as f:
+                kml_content = f.read()
+            
+            # Add proper styling for Google Earth
+            # Red color, not filled, clamped to ground
+            style_section = '''
+    <Style id="RWY_TOFPA_AOC_TypeA_Style">
+        <LineStyle>
+            <color>ff0000ff</color>
+            <width>2</width>
+        </LineStyle>
+        <PolyStyle>
+            <color>00000000</color>
+            <fill>0</fill>
+            <outline>1</outline>
+        </PolyStyle>
+    </Style>'''
+            
+            # Insert style after the Document tag
+            kml_content = kml_content.replace(
+                '<Document>',
+                f'<Document>{style_section}'
+            )
+            
+            # Add styleUrl to Placemark and set altitudeMode to clampToGround
+            kml_content = kml_content.replace(
+                '<Placemark>',
+                '<Placemark><styleUrl>#RWY_TOFPA_AOC_TypeA_Style</styleUrl>'
+            )
+            
+            # Set altitude mode to clampToGround for all coordinates
+            kml_content = kml_content.replace(
+                '<altitudeMode>absolute</altitudeMode>',
+                '<altitudeMode>clampToGround</altitudeMode>'
+            )
+            
+            # If no altitudeMode exists, add it
+            if '<altitudeMode>' not in kml_content:
+                kml_content = kml_content.replace(
+                    '<Polygon>',
+                    '<Polygon><altitudeMode>clampToGround</altitudeMode>'
+                )
+            
+            # Write the modified KML
+            with open(temp_kml, 'w', encoding='utf-8') as f:
+                f.write(kml_content)
+                
+        except Exception as e:
+            self.iface.messageBar().pushMessage(
+                "Warning", 
+                f"Could not modify KML styling: {str(e)}", 
+                level=Qgis.Warning
+            )
+        
+        # Convert KML to KMZ (zip the KML file)
+        import zipfile
+        try:
+            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                zipf.write(temp_kml, os.path.basename(temp_kml))
+            
+            # Remove temporary KML file
+            try:
+                os.remove(temp_kml)
+            except PermissionError:
+                self.iface.messageBar().pushMessage(
+                    "Warning", 
+                    f"Could not delete temporary KML file: {temp_kml}", 
+                    level=Qgis.Warning
+                )
+            
+            self.iface.messageBar().pushMessage(
+                "Success", 
+                f"Exported to KMZ: {file_path}", 
+                level=Qgis.Success
+            )
+            return True
+            
+        except PermissionError:
+            self.iface.messageBar().pushMessage(
+                "Error", 
+                f"Permission denied when creating KMZ file. Check folder permissions.", 
+                level=Qgis.Critical
+            )
+            return False
+        except Exception as e:
+            self.iface.messageBar().pushMessage(
+                "Error", 
+                f"Failed to create KMZ file: {str(e)}", 
+                level=Qgis.Critical
+            )
+            return False
