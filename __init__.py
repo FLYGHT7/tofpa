@@ -4,27 +4,15 @@
  TOFPA
                                  A QGIS plugin
  Takeoff and Final Approach Analysis Tool
-                             -------------------
-        begin                : 2025-5-5
-        copyright            : (C) 2025
-        email                : your.email@example.com
- ***************************************************************************/
-
-/***************************************************************************
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 2 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
  ***************************************************************************/
 """
 
-def classFactory(iface):
-    """Load TOFPA class from file tofpa.py
-    
+# noinspection PyPep8Naming
+def classFactory(iface):  # pylint: disable=invalid-name
+    """Load TOFPA class from file TOFPA.
+
     :param iface: A QGIS interface instance.
     :type iface: QgsInterface
     """
-    from .tofpa import TOFPA
-    return TOFPA(iface)
+    from .tofpa import tofpa  # Changed from TOFPA to tofpa based on the error message
+    return tofpa(iface)
