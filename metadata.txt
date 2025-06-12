@@ -1,8 +1,8 @@
 [general]
 name=TOFPA
 qgisMinimumVersion=3.0
-description=Takeoff and Final Approach Analysis Tool
-version=0.2
+description=This plugin now appears as a dockable panel in QGIS
+version=2.0.0
 author=Your Name
 email=your.email@example.com
 
