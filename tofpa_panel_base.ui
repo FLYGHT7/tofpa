@@ -6,19 +6,19 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>400</width>
-    <height>600</height>
+    <width>300</width>
+    <height>500</height>
    </rect>
   </property>
   <property name="windowTitle">
-   <string>TOFPA Parameters</string>
+   <string>TOFPA</string>
   </property>
   <widget class="QWidget" name="dockWidgetContents">
    <layout class="QVBoxLayout" name="verticalLayout">
     <item>
-     <widget class="QLabel" name="label">
+     <widget class="QLabel" name="titleLabel">
       <property name="text">
-       <string>TOFPA Parameters</string>
+       <string>TOFPA - Takeoff and Final Approach Analysis</string>
       </property>
       <property name="alignment">
        <set>Qt::AlignCenter</set>
@@ -26,26 +26,13 @@
      </widget>
     </item>
     <item>
-     <widget class="QLabel" name="label_2">
-      <property name="text">
-       <string>Take Off Climb Surface considering 15° course changes in right IMC or VMC conditions</string>
-      </property>
-      <property name="alignment">
-       <set>Qt::AlignCenter</set>
-      </property>
-      <property name="wordWrap">
-       <bool>true</bool>
-      </property>
-     </widget>
-    </item>
-    <item>
-     <widget class="QGroupBox" name="groupBox">
+     <widget class="QGroupBox" name="layersGroup">
       <property name="title">
-       <string>Layer Selection</string>
+       <string>Input Layers</string>
       </property>
       <layout class="QFormLayout" name="formLayout">
        <item row="0" column="0">
-        <widget class="QLabel" name="label_3">
+        <widget class="QLabel" name="runwayLabel">
          <property name="text">
           <string>Runway Layer:</string>
          </property>
@@ -55,7 +42,7 @@
         <widget class="QgsMapLayerComboBox" name="runwayLayerCombo"/>
        </item>
        <item row="1" column="0">
-        <widget class="QLabel" name="label_4">
+        <widget class="QLabel" name="thresholdLabel">
          <property name="text">
           <string>Threshold Layer:</string>
          </property>
@@ -64,10 +51,10 @@
        <item row="1" column="1">
         <widget class="QgsMapLayerComboBox" name="thresholdLayerCombo"/>
        </item>
-       <item row="2" column="1">
+       <item row="2" column="0" colspan="2">
         <widget class="QCheckBox" name="useSelectedFeatureCheckBox">
          <property name="text">
-          <string>Use selected feature (if multiple features exist)</string>
+          <string>Use selected features only</string>
          </property>
         </widget>
        </item>
@@ -75,56 +62,62 @@
      </widget>
     </item>
     <item>
-     <widget class="QGroupBox" name="groupBox_2">
+     <widget class="QGroupBox" name="paramsGroup">
       <property name="title">
        <string>Surface Parameters</string>
       </property>
       <layout class="QFormLayout" name="formLayout_2">
        <item row="0" column="0">
-        <widget class="QLabel" name="label_5">
+        <widget class="QLabel" name="initialWidthLabel">
          <property name="text">
-          <string>Initial Width:</string>
+          <string>Initial Width (m):</string>
          </property>
         </widget>
        </item>
        <item row="0" column="1">
         <widget class="QDoubleSpinBox" name="initialWidthSpin">
-         <property name="suffix">
-          <string> m</string>
+         <property name="minimum">
+          <double>0.000000000000000</double>
          </property>
          <property name="maximum">
-          <double>1000.000000000000000</double>
+          <double>10000.000000000000000</double>
+         </property>
+         <property name="value">
+          <double>180.000000000000000</double>
          </property>
         </widget>
        </item>
        <item row="1" column="0">
-        <widget class="QLabel" name="label_6">
+        <widget class="QLabel" name="maxWidthLabel">
          <property name="text">
-          <string>Maximum Width:</string>
+          <string>Maximum Width (m):</string>
          </property>
         </widget>
        </item>
        <item row="1" column="1">
         <widget class="QDoubleSpinBox" name="maxWidthSpin">
-         <property name="suffix">
-          <string> m</string>
+         <property name="minimum">
+          <double>0.000000000000000</double>
          </property>
          <property name="maximum">
-          <double>10000.000000000000000</double>
+          <double>100000.000000000000000</double>
+         </property>
+         <property name="value">
+          <double>1800.000000000000000</double>
          </property>
         </widget>
        </item>
        <item row="2" column="0">
-        <widget class="QLabel" name="label_7">
+        <widget class="QLabel" name="clearwayLabel">
          <property name="text">
-          <string>Clearway Length:</string>
+          <string>Clearway Length (m):</string>
          </property>
         </widget>
        </item>
        <item row="2" column="1">
         <widget class="QDoubleSpinBox" name="clearwayLengthSpin">
-         <property name="suffix">
-          <string> m</string>
+         <property name="minimum">
+          <double>0.000000000000000</double>
          </property>
          <property name="maximum">
           <double>10000.000000000000000</double>
@@ -132,16 +125,16 @@
         </widget>
        </item>
        <item row="3" column="0">
-        <widget class="QLabel" name="label_8">
+        <widget class="QLabel" name="initElevLabel">
          <property name="text">
-          <string>Initial Elevation (Z0):</string>
+          <string>Initial Elevation (m):</string>
          </property>
         </widget>
        </item>
        <item row="3" column="1">
         <widget class="QDoubleSpinBox" name="initialElevationSpin">
-         <property name="suffix">
-          <string> m</string>
+         <property name="minimum">
+          <double>-1000.000000000000000</double>
          </property>
          <property name="maximum">
           <double>10000.000000000000000</double>
@@ -149,16 +142,16 @@
         </widget>
        </item>
        <item row="4" column="0">
-        <widget class="QLabel" name="label_9">
+        <widget class="QLabel" name="endElevLabel">
          <property name="text">
-          <string>End Elevation (ZE):</string>
+          <string>End Elevation (m):</string>
          </property>
         </widget>
        </item>
        <item row="4" column="1">
         <widget class="QDoubleSpinBox" name="endElevationSpin">
-         <property name="suffix">
-          <string> m</string>
+         <property name="minimum">
+          <double>-1000.000000000000000</double>
          </property>
          <property name="maximum">
           <double>10000.000000000000000</double>
@@ -169,7 +162,7 @@
      </widget>
     </item>
     <item>
-     <widget class="QGroupBox" name="groupBox_3">
+     <widget class="QGroupBox" name="exportGroup">
       <property name="title">
        <string>Export Options</string>
       </property>
@@ -177,7 +170,7 @@
        <item>
         <widget class="QCheckBox" name="exportToKmzCheckBox">
          <property name="text">
-          <string>Export to KMZ (for Google Earth)</string>
+          <string>Export to KMZ</string>
          </property>
         </widget>
        </item>
@@ -185,17 +178,20 @@
      </widget>
     </item>
     <item>
-     <widget class="QLabel" name="noteLabel">
-      <property name="text">
-       <string>Note: Make sure to select features in the chosen layers before running if 'Use selected feature' is checked.</string>
+     <spacer name="verticalSpacer">
+      <property name="orientation">
+       <enum>Qt::Vertical</enum>
       </property>
-      <property name="wordWrap">
-       <bool>true</bool>
+      <property name="sizeHint" stdset="0">
+       <size>
+        <width>20</width>
+        <height>40</height>
+       </size>
       </property>
-     </widget>
+     </spacer>
     </item>
     <item>
-     <layout class="QHBoxLayout" name="horizontalLayout">
+     <layout class="QHBoxLayout" name="buttonLayout">
       <item>
        <spacer name="horizontalSpacer">
         <property name="orientation">
@@ -224,19 +220,6 @@
        </widget>
       </item>
      </layout>
-    </item>
-    <item>
-     <spacer name="verticalSpacer">
-      <property name="orientation">
-       <enum>Qt::Vertical</enum>
-      </property>
-      <property name="sizeHint" stdset="0">
-       <size>
-        <width>20</width>
-        <height>40</height>
-       </size>
-      </property>
-     </spacer>
     </item>
    </layout>
   </widget>
