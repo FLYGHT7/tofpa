@@ -14,5 +14,5 @@ def classFactory(iface):  # pylint: disable=invalid-name
     :param iface: A QGIS interface instance.
     :type iface: QgsInterface
     """
-    from .tofpa import tofpa  # Changed from TOFPA to tofpa based on the error message
-    return tofpa(iface)
+    from .tofpa import TOFPA
+    return TOFPA(iface)
