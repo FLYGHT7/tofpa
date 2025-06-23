@@ -22,6 +22,8 @@ FORM_CLASS, _ = uic.loadUiType(os.path.join(
 
 class TOFPAPanel(QtWidgets.QDockWidget, FORM_CLASS):
     closingPlugin = pyqtSignal()
+    calculateClicked = pyqtSignal()
+    closeClicked = pyqtSignal()
 
     def __init__(self, iface, parent=None):
         """Constructor."""
@@ -43,12 +45,19 @@ class TOFPAPanel(QtWidgets.QDockWidget, FORM_CLASS):
         self.thresholdLayerCombo.setFilters(QgsMapLayerProxyModel.PointLayer)
         
         # Connect buttons
-        self.calculateButton.clicked.connect(self.calculate)
-        self.cancelButton.clicked.connect(self.close)
+        self.calculateButton.clicked.connect(self.on_calculate_clicked)
+        self.cancelButton.clicked.connect(self.on_close_clicked)
         
         # Set default values
         self.initialWidthSpin.setValue(180.0)
         self.maxWidthSpin.setValue(1800.0)
+        
+    def on_calculate_clicked(self):
+        self.calculateClicked.emit()
+
+    def on_close_clicked(self):
+        self.closeClicked.emit()
+        self.close()
         
     def calculate(self):
         """Calculate the TOFPA surface"""
@@ -123,13 +132,20 @@ class TOFPAPanel(QtWidgets.QDockWidget, FORM_CLASS):
         if len(runway_features) == 0:
             QMessageBox.warning(self, "TOFPA", "No runway features available to process.")
             return None
-            
+
+        # Get threshold feature
+        if use_selected and threshold_layer.selectedFeatureCount() > 0:
+            threshold_features = threshold_layer.selectedFeatures()
+        else:
+            threshold_features = list(threshold_layer.getFeatures())
+        if len(threshold_features) == 0:
+            QMessageBox.warning(self, "TOFPA", "No threshold features available to process.")
+            return None
+
         # Create output layer
-        result_layer = QgsVectorLayer("Polygon?crs=" + runway_layer.crs().authid(), 
+        result_layer = QgsVectorLayer("PolygonZ?crs=" + runway_layer.crs().authid(), 
                                      "TOFPA Surface", "memory")
         provider = result_layer.dataProvider()
-        
-        # Add attributes
         provider.addAttributes([
             QgsField("runway_id", QVariant.Int),
             QgsField("initial_width", QVariant.Double),
@@ -139,37 +155,67 @@ class TOFPAPanel(QtWidgets.QDockWidget, FORM_CLASS):
             QgsField("end_elev", QVariant.Double)
         ])
         result_layer.updateFields()
-        
-        # Process each runway
-        for runway in runway_features:
-            # TODO: Implement your actual TOFPA surface generation algorithm here
-            # This is a simplified example - replace with your actual calculation logic
-            
-            # Get runway geometry
-            runway_geom = runway.geometry()
-            
-            # Find relevant threshold points (if needed)
-            # threshold_points = self.find_threshold_points(threshold_layer, runway_geom)
-            
-            # Create takeoff and approach surfaces
-            # Replace this with your actual surface generation code
-            buffer_geom = runway_geom.buffer(max_width, 5)
-            
-            # Create feature
-            new_feature = QgsFeature(result_layer.fields())
-            new_feature.setGeometry(buffer_geom)
-            new_feature["runway_id"] = runway.id()
-            new_feature["initial_width"] = initial_width
-            new_feature["max_width"] = max_width
-            new_feature["clearway"] = clearway_length
-            new_feature["init_elev"] = initial_elevation
-            new_feature["end_elev"] = end_elevation
-            
-            provider.addFeatures([new_feature])
-            
-        # Update layer extent
+
+        # Only process the first runway and threshold feature (as in original)
+        runway = runway_features[0]
+        threshold = threshold_features[0]
+
+        # --- LOGICA ORIGINAL DE GEOMETRIA ---
+        rwy_geom = runway.geometry()
+        geom = rwy_geom.asPolyline()
+        if len(geom) < 2:
+            QMessageBox.warning(self, "TOFPA", "Runway geometry is too short.")
+            return None
+
+        # Parámetro s fijo en 1 (como en el original)
+        s = 1
+        s2 = 180 if s == -1 else 0
+
+        start_point = QgsPoint(geom[-1-s])
+        end_point = QgsPoint(geom[s])
+        angle0 = start_point.azimuth(end_point)
+        back_angle0 = angle0 + 180
+
+        azimuth = angle0 + s2
+        bazimuth = azimuth + 180
+
+        # Threshold point
+        new_geom = QgsPoint(threshold.geometry().asPoint())
+        new_geom.addZValue(initial_elevation)
+
+        # Distancia para inicio de superficie
+        dd = clearway_length if clearway_length != 0 else 0
+
+        # Calcular puntos de la superficie TOFPA
+        pt_01d = new_geom.project(dd, bazimuth)
+        pt_01d.setZ(end_elevation)
+        pt_01dl = pt_01d.project(initial_width/2, bazimuth+90)
+        pt_01dr = pt_01d.project(initial_width/2, bazimuth-90)
+
+        pt_02d = pt_01d.project(((max_width/2-initial_width/2)/0.125), bazimuth)
+        pt_02d.setZ(end_elevation+((max_width/2-initial_width/2)/0.125)*0.012)
+        pt_02dl = pt_02d.project(max_width/2, bazimuth+90)
+        pt_02dr = pt_02d.project(max_width/2, bazimuth-90)
+
+        pt_03d = pt_01d.project(10000, bazimuth)
+        pt_03d.setZ(end_elevation+10000*0.012)
+        pt_03dl = pt_03d.project(max_width/2, bazimuth+90)
+        pt_03dr = pt_03d.project(max_width/2, bazimuth-90)
+
+        # Crear polígono con los puntos correctos
+        surface_area = [pt_03dr, pt_03dl, pt_02dl, pt_01dl, pt_01dr, pt_02dr]
+        polygon = QgsPolygon(QgsLineString(surface_area))
+        feature = QgsFeature(result_layer.fields())
+        feature.setGeometry(polygon)
+        feature["runway_id"] = runway.id()
+        feature["initial_width"] = initial_width
+        feature["max_width"] = max_width
+        feature["clearway"] = clearway_length
+        feature["init_elev"] = initial_elevation
+        feature["end_elev"] = end_elevation
+        provider.addFeatures([feature])
+
         result_layer.updateExtents()
-        
         return result_layer
         
     def export_to_kmz(self, layer):
@@ -197,3 +243,18 @@ class TOFPAPanel(QtWidgets.QDockWidget, FORM_CLASS):
         """Called when the panel is closed"""
         self.closingPlugin.emit()
         event.accept()
+
+    def get_parameters(self):
+        """Return all parameters from the panel widgets in a dict (compatible with plugin logic)."""
+        return {
+            'width_tofpa': self.initialWidthSpin.value(),
+            'max_width_tofpa': self.maxWidthSpin.value(),
+            'cwy_length': self.clearwayLengthSpin.value(),
+            'z0': self.initialElevationSpin.value(),
+            'ze': self.endElevationSpin.value(),
+            's': 1,  # Puedes cambiar esto si agregas control de dirección
+            'runway_layer_id': self.runwayLayerCombo.currentLayer().id() if self.runwayLayerCombo.currentLayer() else None,
+            'threshold_layer_id': self.thresholdLayerCombo.currentLayer().id() if self.thresholdLayerCombo.currentLayer() else None,
+            'use_selected_feature': self.useSelectedFeatureCheckBox.isChecked(),
+            'export_kmz': self.exportToKmzCheckBox.isChecked()
+        }

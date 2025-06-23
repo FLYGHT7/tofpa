@@ -26,14 +26,22 @@ from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
                                 QDoubleSpinBox, QDialogButtonBox, QComboBox, 
                                 QCheckBox, QGroupBox, QHBoxLayout, QPushButton)
 from qgis.core import QgsProject, QgsMapLayerProxyModel
+from qgis.PyQt import uic
+import os
 
-class TOFPADialog(QDialog):
+FORM_CLASS, _ = uic.loadUiType(os.path.join(
+    os.path.dirname(__file__), 'tofpa_panel_base.ui'))
+
+class TOFPADialog(QDialog, FORM_CLASS):
     def __init__(self, parent=None, iface=None):
-        super(TOFPADialog, self).__init__(parent)
-        self.setWindowTitle("TOFPA - Takeoff and Final Approach")
-        self.setMinimumWidth(500)
+        super().__init__(parent)
+        self.setupUi(self)
         self.iface = iface
-        
+
+        # Connect buttons
+        self.calculateButton.clicked.connect(self.accept)
+        self.cancelButton.clicked.connect(self.reject)
+
         # Make the dialog non-blocking
         self.setWindowModality(Qt.NonModal)
         
@@ -171,17 +179,16 @@ class TOFPADialog(QDialog):
         self.setLayout(layout)
     
     def get_parameters(self):
-        """Get the parameters from the dialog"""
-        params = {
-            'width_tofpa': self.width_tofpa_spin.value(),
-            'max_width_tofpa': self.max_width_tofpa_spin.value(),
-            'cwy_length': self.cwy_length_spin.value(),
-            'z0': self.z0_spin.value(),
-            'ze': self.ze_spin.value(),
-            's': 0,  # Fixed to Start (s=0) as requested by client
-            'runway_layer_id': self.runway_layer_combo.currentData(),
-            'threshold_layer_id': self.threshold_layer_combo.currentData(),
-            'use_selected_feature': self.use_selected_feature_check.isChecked(),
-            'export_kmz': self.export_kmz_check.isChecked()
+        # Get all parameters from the UI widgets
+        return {
+            'width_tofpa': self.initialWidthSpin.value(),
+            'max_width_tofpa': self.maxWidthSpin.value(),
+            'cwy_length': self.clearwayLengthSpin.value(),
+            'z0': self.initialElevationSpin.value(),
+            'ze': self.endElevationSpin.value(),
+            's': 1,  # Puedes agregar lógica para dirección si tu UI lo permite
+            'runway_layer_id': self.runwayLayerCombo.currentLayer().id() if self.runwayLayerCombo.currentLayer() else None,
+            'threshold_layer_id': self.thresholdLayerCombo.currentLayer().id() if self.thresholdLayerCombo.currentLayer() else None,
+            'use_selected_feature': self.useSelectedFeatureCheckBox.isChecked(),
+            'export_kmz': self.exportToKmzCheckBox.isChecked()
         }
-        return params
