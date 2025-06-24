@@ -147,8 +147,7 @@
           <string>End Elevation (m):</string>
          </property>
         </widget>
-       </item>
-       <item row="4" column="1">
+       </item>       <item row="4" column="1">
         <widget class="QDoubleSpinBox" name="endElevationSpin">
          <property name="minimum">
           <double>-1000.000000000000000</double>
@@ -156,6 +155,27 @@
          <property name="maximum">
           <double>10000.000000000000000</double>
          </property>
+        </widget>
+       </item>
+       <item row="5" column="0">
+        <widget class="QLabel" name="directionLabel">
+         <property name="text">
+          <string>Runway Direction:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="1">
+        <widget class="QComboBox" name="directionCombo">
+         <item>
+          <property name="text">
+           <string>Start to End (0)</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>End to Start (-1)</string>
+          </property>
+         </item>
         </widget>
        </item>
       </layout>
