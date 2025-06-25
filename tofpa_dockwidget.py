@@ -1,3 +1,6 @@
+"""
+FLYGHT7
+"""
 import os
 
 from qgis.PyQt import uic
@@ -32,7 +35,7 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         self.endElevationSpin.setValue(0.0)
         self.exportToKmzCheckBox.setChecked(False)
         self.useSelectedFeatureCheckBox.setChecked(True)
-        self.directionCombo.setCurrentIndex(1)  # Default to "End to Start (-1)"
+        self.directionCombo.setCurrentIndex(0)  # Default to "Start to End (0)"
         
         # Connect signals
         self.calculateButton.clicked.connect(self.on_calculate_clicked)

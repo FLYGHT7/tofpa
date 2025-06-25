@@ -1,14 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 /***************************************************************************
- TOFPA
+ FLYGHT7 -  TOFPA
                                  A QGIS plugin
  Takeoff and Final Approach Analysis Tool
-                              -------------------
-        begin                : 2024-04-14
-        copyright            : (C) 2024
-        email                : your.email@example.com
- ***************************************************************************/
 
  /***************************************************************************
  *                                                                         *
@@ -267,7 +262,7 @@ class TOFPA:
         print(f"dD (distance for surface start): {dD}")
           # Calculate all points for the TOFPA surface using PROJECT method (ORIGINAL LOGIC)
         # First project backward from threshold to get the start point (if CWY length > 0)
-        pt_01D = new_geom.project(dD, bazimuth)  # Project backward from threshold by CWY length
+        pt_01D = new_geom.project(dD, azimuth)  # Project from threshold by CWY length in the direction of the flight
         pt_01D.setZ(ze)
         print(f"pt_01D (start point): {pt_01D.x()}, {pt_01D.y()}, {pt_01D.z()}")
         pt_01DL = pt_01D.project(width_tofpa/2, azimuth+90)  # Use azimuth for perpendicular direction
