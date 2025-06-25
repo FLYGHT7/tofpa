@@ -1,21 +1,34 @@
+# This file contains metadata for your plugin. Since
+# version 2.0 of QGIS this is the proper way to supply
+# information about a plugin. The old method of
+# embedding metadata in __init__.py will
+# is no longer supported since version 2.0.
+
+# This file should be included when you package your plugin.
+# Mandatory items:
 [general]
 name=TOFPA
-qgisMinimumVersion=3.0
-description=This plugin now appears as a dockable panel in QGIS
-version=2.0.0
-author=Your Name
-email=your.email@example.com
+qgisMinimumVersion=3.30
+description=ICAO Annex 4 Take Off Flight Path Area (TOFPA) creation and analysis
+version=0.0.1
+author=FLYGHT7
+email=info@flyght7.com
 
-about=This plugin creates Takeoff and Final Approach surfaces for runway analysis. Features include layer selection, KMZ export, and customizable elevation parameters.
+about=This plugin creates Takeoff and Final Approach surfaces for runway analysis. Features include layer selection, KMZ export, and customizable elevation parameters. 
 
-tracker=http://bugs
-repository=http://repo
+tracker=https://github.com/FLYGHT7/tofpa/issues
+repository=https://github.com/FLYGHT7/tofpa/
+
+changelog=
+ Version 0.0.1:
+ - Beta release
 
 hasProcessingProvider=no
-tags=python,airports,aviation,runway,kmz,google earth
+tags=ICAO,TOFPA,python,airports,aviation,runway,kmz,google earth
 
-homepage=http://homepage
-category=Vector
+homepage=https://www.flyght7.com
+category=Plugins
 icon=icon.png
-experimental=True
+experimental=False
 deprecated=False
+
