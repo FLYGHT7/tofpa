@@ -366,10 +366,13 @@ class TOFPA:
         if not file_path.lower().endswith('.kmz'):
             file_path += '.kmz'
         
-        # Set up KML options with proper styling
+        # Set up KML options with proper styling and absolute altitude
         options = QgsVectorFileWriter.SaveVectorOptions()
         options.driverName = "KML"
         options.layerName = layer.name()
+        
+        # Set KML to use absolute altitude (not clamped to ground)
+        options.datasourceOptions = ['ALTITUDE_MODE=absolute']
         
         # KML uses EPSG:4326 (WGS84)
         crs_4326 = QgsCoordinateReferenceSystem("EPSG:4326")
