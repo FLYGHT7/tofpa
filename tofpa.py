@@ -24,7 +24,7 @@ from qgis.PyQt.QtGui import QColor, QIcon
 from qgis.PyQt.QtWidgets import QFileDialog, QAction
 from qgis.core import (QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry, 
                       QgsPoint, QgsField, QgsPolygon, QgsLineString, Qgis, 
-                      QgsFillSymbol, QgsVectorFileWriter, QgsCoordinateTransform,
+                      QgsFillSymbol, QgsLineSymbol, QgsVectorFileWriter, QgsCoordinateTransform,
                       QgsCoordinateReferenceSystem)
 
 import os.path
@@ -287,6 +287,46 @@ class TOFPA:
         
         list_pts.extend((pt_0D, pt_01D, pt_01DL, pt_01DR, pt_02D, pt_02DL, pt_02DR, pt_03D, pt_03DL, pt_03DR))
         
+        # Create reference line perpendicular to trajectory at start point (3000m each side)
+        # The start point depends on whether CWY exists or not
+        reference_start_point = pt_01D  # This is the calculated start point (considers CWY)
+        
+        # Create points 3000m on each side perpendicular to the azimuth
+        ref_line_left = reference_start_point.project(3000, azimuth+90)  # 3000m to the left
+        ref_line_right = reference_start_point.project(3000, azimuth-90)  # 3000m to the right
+        
+        # Set same elevation as start point
+        ref_line_left.setZ(reference_start_point.z())
+        ref_line_right.setZ(reference_start_point.z())
+        
+        print(f"Reference line left point: {ref_line_left.x()}, {ref_line_left.y()}, {ref_line_left.z()}")
+        print(f"Reference line right point: {ref_line_right.x()}, {ref_line_right.y()}, {ref_line_right.z()}")
+        
+        # Create reference line memory layer
+        ref_layer = QgsVectorLayer(f"LineStringZ?crs={map_srid}", "reference_line", "memory")
+        ref_id_field = QgsField('id', QVariant.Int)
+        ref_label_field = QgsField('txt-label', QVariant.String)
+        ref_layer.dataProvider().addAttributes([ref_id_field, ref_label_field])
+        ref_layer.updateFields()
+        
+        # Create the reference line feature
+        ref_feature = QgsFeature()
+        ref_line_geom = QgsLineString([ref_line_left, ref_line_right])
+        ref_feature.setGeometry(QgsGeometry(ref_line_geom))
+        ref_feature.setAttributes([1, 'tofpa reference line'])
+        ref_layer.dataProvider().addFeatures([ref_feature])
+        
+        # Style the reference line (red color, width 0.25)
+        ref_symbol = QgsLineSymbol.createSimple({
+            'color': '255,0,0,255',  # Red color
+            'width': '0.25'
+        })
+        ref_layer.renderer().setSymbol(ref_symbol)
+        ref_layer.triggerRepaint()
+        
+        # Add reference line layer to map
+        QgsProject.instance().addMapLayers([ref_layer])
+        
         # Creation of the Take Off Climb Surfaces (from original script)
         # Create memory layer
         v_layer = QgsVectorLayer(f"PolygonZ?crs={map_srid}", "RWY_TOFPA_AOC_TypeA", "memory")
@@ -316,9 +356,10 @@ class TOFPA:
         v_layer.renderer().setSymbol(symbol)
         v_layer.triggerRepaint()
         
-        # Export to KMZ if requested
+        # Export to KMZ if requested (include both surface and reference line)
         if export_kmz:
-            self.export_to_kmz(v_layer)
+            layers_to_export = [v_layer, ref_layer]
+            self.export_to_kmz(layers_to_export)
         
         # Zoom to layer (from original script)
         v_layer.selectAll()
@@ -334,12 +375,18 @@ class TOFPA:
         
         return True
 
-    def export_to_kmz(self, layer):
-        """Export the layer to KMZ format for Google Earth with proper styling"""
-        if layer.featureCount() == 0:
+    def export_to_kmz(self, layers):
+        """Export layers to KMZ format for Google Earth with proper styling"""
+        # Handle both single layer and list of layers
+        if not isinstance(layers, list):
+            layers = [layers]
+        
+        # Check if any layer has features
+        has_features = any(layer.featureCount() > 0 for layer in layers)
+        if not has_features:
             self.iface.messageBar().pushMessage(
                 "Error", 
-                "No features to export in the layer", 
+                "No features to export in any layer", 
                 level=Qgis.Critical
             )
             return False
@@ -366,58 +413,68 @@ class TOFPA:
         if not file_path.lower().endswith('.kmz'):
             file_path += '.kmz'
         
-        # Set up KML options with proper styling and absolute altitude
-        options = QgsVectorFileWriter.SaveVectorOptions()
-        options.driverName = "KML"
-        options.layerName = layer.name()
-        
-        # Set KML to use absolute altitude (not clamped to ground)
-        options.datasourceOptions = ['ALTITUDE_MODE=absolute']
-        
-        # KML uses EPSG:4326 (WGS84)
-        crs_4326 = QgsCoordinateReferenceSystem("EPSG:4326")
-        options.ct = QgsCoordinateTransform(
-            layer.crs(), 
-            crs_4326, 
-            QgsProject.instance()
-        )
-        
-        # Write to KML first (will be converted to KMZ)
-        temp_kml = file_path.replace('.kmz', '.kml')
-        result = QgsVectorFileWriter.writeAsVectorFormatV2(
-            layer,
-            temp_kml,
-            QgsProject.instance().transformContext(),
-            options
-        )
-        
-        if result[0] != QgsVectorFileWriter.NoError:
-            self.iface.messageBar().pushMessage(
-                "Error", 
-                f"Failed to export to KML: {result[1]}", 
-                level=Qgis.Critical
-            )
-            return False
-        
-        # Convert KML to KMZ (zip the KML file)
+        # Convert KML to KMZ (zip multiple KML files)
         import zipfile
         try:
             with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                zipf.write(temp_kml, os.path.basename(temp_kml))
-            
-            # Remove temporary KML file
-            try:
-                os.remove(temp_kml)
-            except PermissionError:
-                self.iface.messageBar().pushMessage(
-                    "Warning", 
-                    f"Could not delete temporary KML file: {temp_kml}", 
-                    level=Qgis.Warning
-                )
+                temp_files = []
+                
+                for i, layer in enumerate(layers):
+                    if layer.featureCount() == 0:
+                        continue
+                        
+                    # Set up KML options with proper styling and absolute altitude
+                    options = QgsVectorFileWriter.SaveVectorOptions()
+                    options.driverName = "KML"
+                    options.layerName = layer.name()
+                    
+                    # Set KML to use absolute altitude (not clamped to ground)
+                    options.datasourceOptions = ['ALTITUDE_MODE=absolute']
+                    
+                    # KML uses EPSG:4326 (WGS84)
+                    crs_4326 = QgsCoordinateReferenceSystem("EPSG:4326")
+                    options.ct = QgsCoordinateTransform(
+                        layer.crs(), 
+                        crs_4326, 
+                        QgsProject.instance()
+                    )
+                    
+                    # Write to temporary KML
+                    temp_kml = file_path.replace('.kmz', f'_{i}_{layer.name()}.kml')
+                    temp_files.append(temp_kml)
+                    
+                    result = QgsVectorFileWriter.writeAsVectorFormatV2(
+                        layer,
+                        temp_kml,
+                        QgsProject.instance().transformContext(),
+                        options
+                    )
+                    
+                    if result[0] != QgsVectorFileWriter.NoError:
+                        self.iface.messageBar().pushMessage(
+                            "Error", 
+                            f"Failed to export layer {layer.name()} to KML: {result[1]}", 
+                            level=Qgis.Critical
+                        )
+                        continue
+                    
+                    # Add KML file to ZIP
+                    zipf.write(temp_kml, os.path.basename(temp_kml))
+                
+                # Remove temporary KML files
+                for temp_file in temp_files:
+                    try:
+                        os.remove(temp_file)
+                    except PermissionError:
+                        self.iface.messageBar().pushMessage(
+                            "Warning", 
+                            f"Could not delete temporary KML file: {temp_file}", 
+                            level=Qgis.Warning
+                        )
             
             self.iface.messageBar().pushMessage(
                 "Success", 
-                f"Exported to KMZ: {file_path}", 
+                f"Exported {len(layers)} layers to KMZ: {file_path}", 
                 level=Qgis.Success
             )
             return True
