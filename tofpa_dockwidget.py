@@ -3,7 +3,7 @@ import os
 from qgis.PyQt import uic
 from qgis.PyQt.QtCore import pyqtSignal, Qt
 from qgis.PyQt.QtWidgets import QDockWidget
-from qgis.core import QgsMapLayerProxyModel
+from qgis.core import QgsMapLayerProxyModel, QgsWkbTypes
 
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'tofpa_panel_base.ui'))
@@ -20,9 +20,25 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         self.iface = iface
         self.setupUi(self)
         
-        # Configure layer combo boxes to only show vector layers
+        # Configure layer combo boxes with specific geometry filters
+        # Runway Layer: Only LineString geometries (lines)
         self.runwayLayerCombo.setFilters(QgsMapLayerProxyModel.VectorLayer)
+        self.runwayLayerCombo.setExceptedLayerList([])
+        
+        # Threshold Layer: Only Point geometries  
         self.thresholdLayerCombo.setFilters(QgsMapLayerProxyModel.VectorLayer)
+        self.thresholdLayerCombo.setExceptedLayerList([])
+        
+        # Apply geometry-specific filters
+        self._apply_geometry_filters()
+        
+        # Connect to layer changes to refresh filters
+        try:
+            from qgis.core import QgsProject
+            QgsProject.instance().layersAdded.connect(self._on_layers_changed)
+            QgsProject.instance().layersRemoved.connect(self._on_layers_changed)
+        except Exception:
+            pass  # Fallback if QGIS not available
         
         # Set default values from original script
         self.initialWidthSpin.setValue(180.0)
@@ -37,6 +53,46 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         # Connect signals
         self.calculateButton.clicked.connect(self.on_calculate_clicked)
         self.cancelButton.clicked.connect(self.on_close_clicked)
+
+    def _apply_geometry_filters(self):
+        """Apply geometry-specific filters to layer combo boxes"""
+        from qgis.core import QgsProject
+        
+        # Get all vector layers
+        all_layers = QgsProject.instance().mapLayers().values()
+        vector_layers = [layer for layer in all_layers if hasattr(layer, 'geometryType')]
+        
+        # Lists to store layers that don't match geometry requirements
+        non_line_layers = []
+        non_point_layers = []
+        
+        for layer in vector_layers:
+            try:
+                geom_type = layer.geometryType()
+                
+                # For runway combo: exclude non-line layers
+                if geom_type != QgsWkbTypes.LineGeometry:
+                    non_line_layers.append(layer)
+                
+                # For threshold combo: exclude non-point layers  
+                if geom_type != QgsWkbTypes.PointGeometry:
+                    non_point_layers.append(layer)
+                    
+            except Exception as e:
+                # If we can't determine geometry type, exclude from both
+                non_line_layers.append(layer)
+                non_point_layers.append(layer)
+        
+        # Apply filters
+        self.runwayLayerCombo.setExceptedLayerList(non_line_layers)
+        self.thresholdLayerCombo.setExceptedLayerList(non_point_layers)
+
+    def _on_layers_changed(self):
+        """Refresh geometry filters when layers are added or removed"""
+        try:
+            self._apply_geometry_filters()
+        except Exception:
+            pass  # Fallback if filtering fails
 
     def on_calculate_clicked(self):
         """Emit signal when calculate button is clicked"""
