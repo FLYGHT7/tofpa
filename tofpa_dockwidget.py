@@ -47,6 +47,7 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         self.initialElevationSpin.setValue(0.0)
         self.endElevationSpin.setValue(0.0)
         self.exportToKmzCheckBox.setChecked(False)
+        self.exportToAixmCheckBox.setChecked(False)
         self.useSelectedFeatureCheckBox.setChecked(True)
         self.directionCombo.setCurrentIndex(1)  # Default to "End to Start (-1)"
         
@@ -117,7 +118,8 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             'runway_layer_id': self.runwayLayerCombo.currentLayer().id() if self.runwayLayerCombo.currentLayer() else None,
             'threshold_layer_id': self.thresholdLayerCombo.currentLayer().id() if self.thresholdLayerCombo.currentLayer() else None,
             'use_selected_feature': self.useSelectedFeatureCheckBox.isChecked(),
-            'export_kmz': self.exportToKmzCheckBox.isChecked()
+            'export_kmz': self.exportToKmzCheckBox.isChecked(),
+            'export_aixm': self.exportToAixmCheckBox.isChecked()
         }
 
     def closeEvent(self, event):

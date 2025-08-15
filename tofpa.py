@@ -25,7 +25,7 @@ from qgis.PyQt.QtWidgets import QFileDialog, QAction
 from qgis.core import (QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry, 
                       QgsPoint, QgsField, QgsPolygon, QgsLineString, Qgis, 
                       QgsFillSymbol, QgsLineSymbol, QgsVectorFileWriter, QgsCoordinateTransform,
-                      QgsCoordinateReferenceSystem)
+                      QgsCoordinateReferenceSystem, QgsWkbTypes)
 
 import os.path
 from math import *
@@ -142,7 +142,8 @@ class TOFPA:
             params['runway_layer_id'],
             params['threshold_layer_id'],
             params['use_selected_feature'],
-            params['export_kmz']
+            params['export_kmz'],
+            params['export_aixm']
         )
         if success:
             self.iface.messageBar().pushMessage("TOFPA:", "TakeOff Climb Surface Calculation Finished", level=Qgis.Success)
@@ -189,7 +190,7 @@ class TOFPA:
                 return None
 
     def create_tofpa_surface(self, width_tofpa, max_width_tofpa, cwy_length, z0, ze, s, 
-                            runway_layer_id, threshold_layer_id, use_selected_feature, export_kmz):
+                            runway_layer_id, threshold_layer_id, use_selected_feature, export_kmz, export_aixm):
         """Create the TOFPA surface with the given parameters - ORIGINAL LOGIC"""
         
         map_srid = self.iface.mapCanvas().mapSettings().destinationCrs().authid()
@@ -361,6 +362,11 @@ class TOFPA:
             layers_to_export = [v_layer, ref_layer]
             self.export_to_kmz(layers_to_export)
         
+        # Export to AIXM if requested
+        if export_aixm:
+            layers_to_export = [v_layer, ref_layer]
+            self.export_to_aixm(layers_to_export)
+        
         # Zoom to layer (from original script)
         v_layer.selectAll()
         canvas = self.iface.mapCanvas()
@@ -486,3 +492,234 @@ class TOFPA:
                 level=Qgis.Critical
             )
             return False
+
+    def export_to_aixm(self, layers):
+        """Export layers to AIXM 5.1.1 format for aviation data exchange"""
+        # Handle both single layer and list of layers
+        if not isinstance(layers, list):
+            layers = [layers]
+        
+        # Check if any layer has features
+        has_features = any(layer.featureCount() > 0 for layer in layers)
+        if not has_features:
+            self.iface.messageBar().pushMessage(
+                "Error", 
+                "No features to export in any layer", 
+                level=Qgis.Critical
+            )
+            return False
+            
+        # Ask user for save location
+        file_dialog = QFileDialog()
+        file_dialog.setDefaultSuffix('xml')
+        file_path, _ = file_dialog.getSaveFileName(
+            None, 
+            "Save AIXM File", 
+            "", 
+            "AIXM Files (*.xml)"
+        )
+        
+        if not file_path:
+            self.iface.messageBar().pushMessage(
+                "Info", 
+                "AIXM export cancelled by user", 
+                level=Qgis.Info
+            )
+            return False
+        
+        # Ensure file has .xml extension
+        if not file_path.lower().endswith('.xml'):
+            file_path += '.xml'
+        
+        try:
+            self._generate_aixm_file(layers, file_path)
+            
+            self.iface.messageBar().pushMessage(
+                "Success", 
+                f"Exported {len(layers)} layers to AIXM: {file_path}", 
+                level=Qgis.Success
+            )
+            return True
+            
+        except Exception as e:
+            self.iface.messageBar().pushMessage(
+                "Error", 
+                f"Failed to create AIXM file: {str(e)}", 
+                level=Qgis.Critical
+            )
+            return False
+
+    def _generate_aixm_file(self, layers, file_path):
+        """Generate AIXM 5.1.1 compliant XML file"""
+        import xml.etree.ElementTree as ET
+        from datetime import datetime
+        import uuid
+        
+        # Create root element with AIXM 5.1.1 namespace
+        root = ET.Element("aixm:AIXMBasicMessage")
+        root.set("xmlns:aixm", "http://www.aixm.aero/schema/5.1.1")
+        root.set("xmlns:gml", "http://www.opengis.net/gml/3.2")
+        root.set("xmlns:xlink", "http://www.w3.org/1999/xlink")
+        root.set("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
+        root.set("xsi:schemaLocation", "http://www.aixm.aero/schema/5.1.1 http://www.aixm.aero/schema/5.1.1/AIXM_BasicMessage.xsd")
+        
+        # Add message metadata
+        header = ET.SubElement(root, "gml:boundedBy")
+        ET.SubElement(header, "gml:Null").text = "unknown"
+        
+        # Add feature member for each layer
+        for layer in layers:
+            if layer.featureCount() == 0:
+                continue
+                
+            if "reference_line" in layer.name().lower():
+                self._add_aixm_reference_line(root, layer)
+            else:
+                self._add_aixm_surface(root, layer)
+        
+        # Write to file with proper formatting
+        tree = ET.ElementTree(root)
+        ET.indent(tree, space="  ", level=0)
+        tree.write(file_path, encoding='utf-8', xml_declaration=True)
+
+    def _add_aixm_surface(self, root, layer):
+        """Add TOFPA surface as AIXM NavigationArea"""
+        import xml.etree.ElementTree as ET
+        import uuid
+        from datetime import datetime
+        
+        for feature in layer.getFeatures():
+            # Create feature member
+            feature_member = ET.SubElement(root, "gml:featureMember")
+            nav_area = ET.SubElement(feature_member, "aixm:NavigationArea")
+            nav_area.set("gml:id", f"tofpa_surface_{uuid.uuid4().hex[:8]}")
+            
+            # Add time slice
+            time_slice = ET.SubElement(nav_area, "aixm:timeSlice")
+            nav_area_ts = ET.SubElement(time_slice, "aixm:NavigationAreaTimeSlice")
+            nav_area_ts.set("gml:id", f"ts_{uuid.uuid4().hex[:8]}")
+            
+            # Valid time
+            valid_time = ET.SubElement(nav_area_ts, "gml:validTime")
+            time_period = ET.SubElement(valid_time, "gml:TimePeriod")
+            time_period.set("gml:id", f"tp_{uuid.uuid4().hex[:8]}")
+            begin_pos = ET.SubElement(time_period, "gml:beginPosition")
+            begin_pos.text = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+            end_pos = ET.SubElement(time_period, "gml:endPosition")
+            end_pos.set("indeterminatePosition", "unknown")
+            
+            # Interpretation
+            interpretation = ET.SubElement(nav_area_ts, "aixm:interpretation")
+            interpretation.text = "BASELINE"
+            
+            # Designator
+            designator = ET.SubElement(nav_area_ts, "aixm:designator")
+            designator.text = "TOFPA_AOC_TypeA"
+            
+            # Type
+            nav_type = ET.SubElement(nav_area_ts, "aixm:type")
+            nav_type.text = "TAKEOFF_CLIMB_SURFACE"
+            
+            # Geometry
+            geom = feature.geometry()
+            if geom and not geom.isEmpty():
+                self._add_aixm_geometry(nav_area_ts, geom)
+
+    def _add_aixm_reference_line(self, root, layer):
+        """Add reference line as AIXM Curve"""
+        import xml.etree.ElementTree as ET
+        import uuid
+        from datetime import datetime
+        
+        for feature in layer.getFeatures():
+            # Create feature member
+            feature_member = ET.SubElement(root, "gml:featureMember")
+            curve = ET.SubElement(feature_member, "aixm:Curve")
+            curve.set("gml:id", f"reference_line_{uuid.uuid4().hex[:8]}")
+            
+            # Add designator
+            designator = ET.SubElement(curve, "aixm:designator")
+            designator.text = "TOFPA_REFERENCE_LINE"
+            
+            # Geometry
+            geom = feature.geometry()
+            if geom and not geom.isEmpty():
+                self._add_aixm_geometry(curve, geom)
+
+    def _add_aixm_geometry(self, parent, geometry):
+        """Add geometry to AIXM element in GML format"""
+        import xml.etree.ElementTree as ET
+        
+        # Transform to WGS84 for AIXM compliance
+        crs_4326 = QgsCoordinateReferenceSystem("EPSG:4326")
+        transform = QgsCoordinateTransform(
+            geometry.crs() if hasattr(geometry, 'crs') else QgsProject.instance().crs(),
+            crs_4326,
+            QgsProject.instance()
+        )
+        
+        geom_4326 = QgsGeometry(geometry)
+        geom_4326.transform(transform)
+        
+        if geometry.type() == QgsWkbTypes.PolygonGeometry:
+            self._add_gml_surface(parent, geom_4326)
+        elif geometry.type() == QgsWkbTypes.LineGeometry:
+            self._add_gml_curve(parent, geom_4326)
+
+    def _add_gml_surface(self, parent, geometry):
+        """Add GML Surface geometry"""
+        import xml.etree.ElementTree as ET
+        
+        geom_elem = ET.SubElement(parent, "aixm:geometryComponent")
+        surface = ET.SubElement(geom_elem, "aixm:Surface")
+        surface.set("gml:id", f"srf_{hash(str(geometry.asWkt())) & 0x7fffffff}")
+        surface.set("srsName", "urn:ogc:def:crs:EPSG::4326")
+        surface.set("srsDimension", "3")
+        
+        patches = ET.SubElement(surface, "gml:patches")
+        polygon_patch = ET.SubElement(patches, "gml:PolygonPatch")
+        
+        # Exterior boundary
+        exterior = ET.SubElement(polygon_patch, "gml:exterior")
+        linear_ring = ET.SubElement(exterior, "gml:LinearRing")
+        pos_list = ET.SubElement(linear_ring, "gml:posList")
+        
+        # Get coordinates
+        if geometry.isMultipart():
+            polygon = geometry.asMultiPolygon()[0][0]  # First polygon, exterior ring
+        else:
+            polygon = geometry.asPolygon()[0]  # Exterior ring
+            
+        coords = []
+        for point in polygon:
+            # AIXM uses lat,lon,alt order
+            coords.extend([f"{point.y():.8f}", f"{point.x():.8f}", f"{point.z():.3f}" if point.is3D() else "0.000"])
+        
+        pos_list.text = " ".join(coords)
+
+    def _add_gml_curve(self, parent, geometry):
+        """Add GML Curve geometry"""
+        import xml.etree.ElementTree as ET
+        
+        geom_elem = ET.SubElement(parent, "aixm:geometryComponent")
+        curve = ET.SubElement(geom_elem, "aixm:Curve")
+        curve.set("gml:id", f"crv_{hash(str(geometry.asWkt())) & 0x7fffffff}")
+        curve.set("srsName", "urn:ogc:def:crs:EPSG::4326")
+        curve.set("srsDimension", "3")
+        
+        segments = ET.SubElement(curve, "gml:segments")
+        line_segment = ET.SubElement(segments, "gml:LineStringSegment")
+        pos_list = ET.SubElement(line_segment, "gml:posList")
+        
+        # Get coordinates
+        if geometry.isMultipart():
+            line = geometry.asMultiPolyline()[0]  # First line
+        else:
+            line = geometry.asPolyline()
+            
+        coords = []
+        for point in line:
+            # AIXM uses lat,lon,alt order
+            coords.extend([f"{point.y():.8f}", f"{point.x():.8f}", f"{point.z():.3f}" if point.is3D() else "0.000"])
+        
+        pos_list.text = " ".join(coords)

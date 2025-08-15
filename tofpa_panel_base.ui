@@ -209,6 +209,13 @@
          </property>
         </widget>
        </item>
+       <item>
+        <widget class="QCheckBox" name="exportToAixmCheckBox">
+         <property name="text">
+          <string>Export to AIXM 5.1.1</string>
+         </property>
+        </widget>
+       </item>
       </layout>
      </widget>
     </item>
