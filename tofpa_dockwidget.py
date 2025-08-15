@@ -1,7 +1,7 @@
 import os
 
 from qgis.PyQt import uic
-from qgis.PyQt.QtCore import pyqtSignal, Qt
+from qgis.PyQt.QtCore import pyqtSignal, Qt, QVariant
 from qgis.PyQt.QtWidgets import QDockWidget
 from qgis.core import QgsMapLayerProxyModel, QgsWkbTypes
 
@@ -29,16 +29,26 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         self.thresholdLayerCombo.setFilters(QgsMapLayerProxyModel.VectorLayer)
         self.thresholdLayerCombo.setExceptedLayerList([])
         
+        # Obstacles Layer: Point or Polygon geometries
+        self.obstaclesLayerCombo.setFilters(QgsMapLayerProxyModel.VectorLayer)
+        self.obstaclesLayerCombo.setExceptedLayerList([])
+        
         # Apply geometry-specific filters
         self._apply_geometry_filters()
         
-        # Connect to layer changes to refresh filters
+        # Connect to layer changes to refresh filters and obstacle field combo
         try:
             from qgis.core import QgsProject
             QgsProject.instance().layersAdded.connect(self._on_layers_changed)
             QgsProject.instance().layersRemoved.connect(self._on_layers_changed)
         except Exception:
             pass  # Fallback if QGIS not available
+        
+        # Connect obstacles layer change to update height field combo
+        self.obstaclesLayerCombo.layerChanged.connect(self._update_obstacle_fields)
+        
+        # Connect checkbox to enable/disable obstacles group
+        self.includeObstaclesCheckBox.toggled.connect(self._toggle_obstacles_group)
         
         # Set default values from original script
         self.initialWidthSpin.setValue(180.0)
@@ -50,6 +60,14 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         self.exportToAixmCheckBox.setChecked(False)
         self.useSelectedFeatureCheckBox.setChecked(True)
         self.directionCombo.setCurrentIndex(1)  # Default to "End to Start (-1)"
+        
+        # Set default values for obstacles
+        self.includeObstaclesCheckBox.setChecked(False)
+        self.obstacleBufferSpin.setValue(10.0)
+        self.minObstacleHeightSpin.setValue(5.0)
+        
+        # Initialize obstacles group as disabled
+        self._toggle_obstacles_group(False)
         
         # Connect signals
         self.calculateButton.clicked.connect(self.on_calculate_clicked)
@@ -66,6 +84,7 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         # Lists to store layers that don't match geometry requirements
         non_line_layers = []
         non_point_layers = []
+        non_obstacle_layers = []  # For obstacles: points or polygons only
         
         for layer in vector_layers:
             try:
@@ -78,22 +97,62 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
                 # For threshold combo: exclude non-point layers  
                 if geom_type != QgsWkbTypes.PointGeometry:
                     non_point_layers.append(layer)
+                
+                # For obstacles combo: exclude non-point and non-polygon layers
+                if geom_type not in [QgsWkbTypes.PointGeometry, QgsWkbTypes.PolygonGeometry]:
+                    non_obstacle_layers.append(layer)
                     
             except Exception as e:
-                # If we can't determine geometry type, exclude from both
+                # If we can't determine geometry type, exclude from all
                 non_line_layers.append(layer)
                 non_point_layers.append(layer)
+                non_obstacle_layers.append(layer)
         
         # Apply filters
         self.runwayLayerCombo.setExceptedLayerList(non_line_layers)
         self.thresholdLayerCombo.setExceptedLayerList(non_point_layers)
+        self.obstaclesLayerCombo.setExceptedLayerList(non_obstacle_layers)
 
     def _on_layers_changed(self):
         """Refresh geometry filters when layers are added or removed"""
         try:
             self._apply_geometry_filters()
+            # Also update obstacle fields if obstacles layer is selected
+            self._update_obstacle_fields()
         except Exception:
             pass  # Fallback if filtering fails
+
+    def _update_obstacle_fields(self):
+        """Update the obstacle height field combo box based on selected layer"""
+        try:
+            self.obstacleHeightFieldCombo.clear()
+            
+            layer = self.obstaclesLayerCombo.currentLayer()
+            if layer:
+                # Add numeric fields to the combo
+                for field in layer.fields():
+                    if field.type() in [QVariant.Int, QVariant.Double]:
+                        self.obstacleHeightFieldCombo.addItem(field.name())
+                        
+                # Set default common field names if available
+                field_names = [field.name().lower() for field in layer.fields()]
+                for default_name in ['height', 'elevation', 'elev', 'z', 'alt', 'altitude']:
+                    if default_name in field_names:
+                        index = field_names.index(default_name)
+                        self.obstacleHeightFieldCombo.setCurrentIndex(index)
+                        break
+        except Exception:
+            pass  # Fallback if field update fails
+
+    def _toggle_obstacles_group(self, enabled):
+        """Enable or disable the obstacles group based on checkbox state"""
+        try:
+            self.obstaclesGroup.setEnabled(enabled)
+            if not enabled:
+                # Clear obstacles layer selection when disabled
+                self.obstaclesLayerCombo.setCurrentIndex(-1)
+        except Exception:
+            pass  # Fallback if toggle fails
 
     def on_calculate_clicked(self):
         """Emit signal when calculate button is clicked"""
@@ -119,7 +178,13 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             'threshold_layer_id': self.thresholdLayerCombo.currentLayer().id() if self.thresholdLayerCombo.currentLayer() else None,
             'use_selected_feature': self.useSelectedFeatureCheckBox.isChecked(),
             'export_kmz': self.exportToKmzCheckBox.isChecked(),
-            'export_aixm': self.exportToAixmCheckBox.isChecked()
+            'export_aixm': self.exportToAixmCheckBox.isChecked(),
+            # New obstacles parameters
+            'include_obstacles': self.includeObstaclesCheckBox.isChecked(),
+            'obstacles_layer_id': self.obstaclesLayerCombo.currentLayer().id() if self.obstaclesLayerCombo.currentLayer() and self.includeObstaclesCheckBox.isChecked() else None,
+            'obstacle_height_field': self.obstacleHeightFieldCombo.currentText() if self.includeObstaclesCheckBox.isChecked() else None,
+            'obstacle_buffer': self.obstacleBufferSpin.value(),
+            'min_obstacle_height': self.minObstacleHeightSpin.value()
         }
 
     def closeEvent(self, event):
