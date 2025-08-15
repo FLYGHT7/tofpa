@@ -51,10 +51,27 @@
        <item row="1" column="1">
         <widget class="QgsMapLayerComboBox" name="thresholdLayerCombo"/>
        </item>
-       <item row="2" column="0" colspan="2">
+       <item row="2" column="0">
+        <widget class="QLabel" name="obstaclesLabel">
+         <property name="text">
+          <string>Obstacles Layer:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <widget class="QgsMapLayerComboBox" name="obstaclesLayerCombo"/>
+       </item>
+       <item row="3" column="0" colspan="2">
         <widget class="QCheckBox" name="useSelectedFeatureCheckBox">
          <property name="text">
           <string>Use selected features only</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="0" colspan="2">
+        <widget class="QCheckBox" name="includeObstaclesCheckBox">
+         <property name="text">
+          <string>Include survey obstacles analysis</string>
          </property>
         </widget>
        </item>
@@ -197,6 +214,75 @@
      </widget>
     </item>
     <item>
+     <widget class="QGroupBox" name="obstaclesGroup">
+      <property name="title">
+       <string>Survey Obstacles Parameters</string>
+      </property>
+      <layout class="QFormLayout" name="formLayout_3">
+       <item row="0" column="0">
+        <widget class="QLabel" name="obstacleBufferLabel">
+         <property name="text">
+          <string>Safety Buffer (m):</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QDoubleSpinBox" name="obstacleBufferSpin">
+         <property name="minimum">
+          <double>0.000000000000000</double>
+         </property>
+         <property name="maximum">
+          <double>1000.000000000000000</double>
+         </property>
+         <property name="decimals">
+          <number>2</number>
+         </property>
+         <property name="value">
+          <double>10.00</double>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="0">
+        <widget class="QLabel" name="obstacleHeightFieldLabel">
+         <property name="text">
+          <string>Height Field:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QComboBox" name="obstacleHeightFieldCombo">
+         <property name="editable">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="0">
+        <widget class="QLabel" name="minObstacleHeightLabel">
+         <property name="text">
+          <string>Min Height (m):</string>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <widget class="QDoubleSpinBox" name="minObstacleHeightSpin">
+         <property name="minimum">
+          <double>0.000000000000000</double>
+         </property>
+         <property name="maximum">
+          <double>1000.000000000000000</double>
+         </property>
+         <property name="decimals">
+          <number>2</number>
+         </property>
+         <property name="value">
+          <double>5.00</double>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
      <widget class="QGroupBox" name="exportGroup">
       <property name="title">
        <string>Export Options</string>
@@ -206,6 +292,13 @@
         <widget class="QCheckBox" name="exportToKmzCheckBox">
          <property name="text">
           <string>Export to KMZ</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="exportToAixmCheckBox">
+         <property name="text">
+          <string>Export to AIXM 5.1.1</string>
          </property>
         </widget>
        </item>
