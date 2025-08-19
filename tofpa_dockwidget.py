@@ -66,8 +66,16 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         self.obstacleBufferSpin.setValue(10.0)
         self.minObstacleHeightSpin.setValue(5.0)
         
+        # Set default values for shadow analysis
+        self.enableShadowAnalysisCheckBox.setChecked(False)
+        self.shadowToleranceSpin.setValue(5.0)
+        
+        # Connect shadow analysis checkbox to enable/disable shadow tolerance control
+        self.enableShadowAnalysisCheckBox.toggled.connect(self._toggle_shadow_controls)
+        
         # Initialize obstacles group as disabled
         self._toggle_obstacles_group(False)
+        self._toggle_shadow_controls(False)
         
         # Connect signals
         self.calculateButton.clicked.connect(self.on_calculate_clicked)
@@ -151,6 +159,30 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             if not enabled:
                 # Clear obstacles layer selection when disabled
                 self.obstaclesLayerCombo.setCurrentIndex(-1)
+                # Also disable shadow analysis when obstacles are disabled
+                self.enableShadowAnalysisCheckBox.setChecked(False)
+            
+            # Update shadow controls based on obstacles state
+            self._toggle_shadow_controls(self.enableShadowAnalysisCheckBox.isChecked())
+        except Exception:
+            pass  # Fallback if toggle fails
+
+    def _toggle_shadow_controls(self, enabled):
+        """Enable or disable shadow analysis controls based on checkbox state"""
+        try:
+            # Shadow analysis is only available when obstacles analysis is enabled
+            obstacles_enabled = self.includeObstaclesCheckBox.isChecked()
+            final_enabled = enabled and obstacles_enabled
+            
+            self.shadowToleranceLabel.setEnabled(final_enabled)
+            self.shadowToleranceSpin.setEnabled(final_enabled)
+            
+            # If obstacles are not enabled, disable shadow analysis checkbox
+            if not obstacles_enabled:
+                self.enableShadowAnalysisCheckBox.setEnabled(False)
+                self.enableShadowAnalysisCheckBox.setChecked(False)
+            else:
+                self.enableShadowAnalysisCheckBox.setEnabled(True)
         except Exception:
             pass  # Fallback if toggle fails
 
@@ -184,7 +216,10 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             'obstacles_layer_id': self.obstaclesLayerCombo.currentLayer().id() if self.obstaclesLayerCombo.currentLayer() and self.includeObstaclesCheckBox.isChecked() else None,
             'obstacle_height_field': self.obstacleHeightFieldCombo.currentText() if self.includeObstaclesCheckBox.isChecked() else None,
             'obstacle_buffer': self.obstacleBufferSpin.value(),
-            'min_obstacle_height': self.minObstacleHeightSpin.value()
+            'min_obstacle_height': self.minObstacleHeightSpin.value(),
+            # New shadow analysis parameters
+            'enable_shadow_analysis': self.enableShadowAnalysisCheckBox.isChecked() and self.includeObstaclesCheckBox.isChecked(),
+            'shadow_tolerance': self.shadowToleranceSpin.value()
         }
 
     def closeEvent(self, event):

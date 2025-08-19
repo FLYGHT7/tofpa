@@ -149,7 +149,9 @@ class TOFPA:
             params['obstacles_layer_id'],
             params['obstacle_height_field'],
             params['obstacle_buffer'],
-            params['min_obstacle_height']
+            params['min_obstacle_height'],
+            params['enable_shadow_analysis'],
+            params['shadow_tolerance']
         )
         if success:
             self.iface.messageBar().pushMessage("TOFPA:", "TakeOff Climb Surface Calculation Finished", level=Qgis.Success)
@@ -198,8 +200,9 @@ class TOFPA:
 
     def create_tofpa_surface(self, width_tofpa, max_width_tofpa, cwy_length, z0, ze, s, 
                             runway_layer_id, threshold_layer_id, use_selected_feature, export_kmz, export_aixm,
-                            include_obstacles, obstacles_layer_id, obstacle_height_field, obstacle_buffer, min_obstacle_height):
-        """Create the TOFPA surface with the given parameters - ORIGINAL LOGIC + OBSTACLES"""
+                            include_obstacles, obstacles_layer_id, obstacle_height_field, obstacle_buffer, min_obstacle_height,
+                            enable_shadow_analysis, shadow_tolerance):
+        """Create the TOFPA surface with the given parameters - ORIGINAL LOGIC + OBSTACLES + SHADOW ANALYSIS"""
         
         map_srid = self.iface.mapCanvas().mapSettings().destinationCrs().authid()
         
@@ -378,15 +381,26 @@ class TOFPA:
                     obstacle_buffer, 
                     min_obstacle_height,
                     v_layer,  # TOFPA surface for intersection analysis
-                    use_selected_feature
+                    use_selected_feature,
+                    enable_shadow_analysis,
+                    shadow_tolerance
                 )
                 if obstacles_info:
                     obstacles_layers = obstacles_info['layers']
+                    
+                    # Create result message including shadow analysis if performed
+                    message = f"Analyzed {obstacles_info['total_obstacles']} obstacles, {obstacles_info['critical_obstacles']} are critical"
+                    
+                    if enable_shadow_analysis and 'shadow_results' in obstacles_info:
+                        shadow_results = obstacles_info['shadow_results']
+                        shadowed_count = len(shadow_results.get('shadowed_obstacles', []))
+                        visible_count = len([obs for obs in shadow_results.get('visible_obstacles', []) if obs.get('is_critical', False)])
+                        message += f", {shadowed_count} shadowed, {visible_count} visible"
+                    
                     # Display obstacles analysis results
                     self.iface.messageBar().pushMessage(
                         "Obstacles Analysis:", 
-                        f"Analyzed {obstacles_info['total_obstacles']} obstacles, "
-                        f"{obstacles_info['critical_obstacles']} are critical", 
+                        message, 
                         level=Qgis.Info
                     )
             except Exception as e:
@@ -422,7 +436,8 @@ class TOFPA:
         return True
 
     def process_survey_obstacles(self, obstacles_layer_id, height_field, buffer_distance, 
-                                min_height, tofpa_surface_layer, use_selected_feature):
+                                min_height, tofpa_surface_layer, use_selected_feature,
+                                enable_shadow_analysis=False, shadow_tolerance=5.0):
         """
         Process survey obstacles and analyze their impact on TOFPA surface.
         
@@ -453,9 +468,10 @@ class TOFPA:
         # Create layers for obstacles analysis
         layers_info = self._create_obstacles_layers(obstacles_layer.crs())
         
-        # Process each obstacle
+        # Process each obstacle and collect obstacle data
         critical_obstacles = 0
         total_obstacles = 0
+        obstacles_data = []  # Store all obstacle information for shadow analysis
         
         for feature in features:
             try:
@@ -466,21 +482,40 @@ class TOFPA:
                 total_obstacles += 1
                 if obstacle_info['is_critical']:
                     critical_obstacles += 1
+                
+                # Store obstacle data for shadow analysis
+                obstacles_data.append({
+                    'feature': feature,
+                    'obstacle_info': obstacle_info,
+                    'point': obstacle_info['obstacle_point'],
+                    'height': obstacle_info['height'],
+                    'is_critical': obstacle_info['is_critical']
+                })
+                
             except Exception as e:
                 print(f"Warning: Failed to process obstacle feature {feature.id()}: {str(e)}")
                 continue
+        
+        # Perform shadow analysis on critical obstacles if enabled
+        shadow_results = {'shadowed_obstacles': [], 'visible_obstacles': obstacles_data}
+        if enable_shadow_analysis:
+            shadow_results = self._perform_shadow_analysis(obstacles_data, tofpa_surface_layer, shadow_tolerance)
+            # Update layers with shadow analysis results
+            self._apply_shadow_results(layers_info, shadow_results)
         
         # Add layers to map and style them
         self._finalize_obstacles_layers(layers_info)
         
         return {
-            'layers': [layers_info['critical_layer'], layers_info['safe_layer'], layers_info['buffer_layer']],
+            'layers': [layers_info['critical_layer'], layers_info['safe_layer'], layers_info['buffer_layer'], 
+                      layers_info.get('shadowed_layer'), layers_info.get('visible_layer')],
             'total_obstacles': total_obstacles,
-            'critical_obstacles': critical_obstacles
+            'critical_obstacles': critical_obstacles,
+            'shadow_results': shadow_results
         }
 
     def _create_obstacles_layers(self, crs):
-        """Create memory layers for obstacles analysis"""
+        """Create memory layers for obstacles analysis including shadow analysis layers"""
         # Critical obstacles layer (red)
         critical_layer = QgsVectorLayer(f"PointZ?crs={crs.authid()}", "Critical_Obstacles", "memory")
         critical_fields = [
@@ -488,7 +523,9 @@ class TOFPA:
             QgsField('height', QVariant.Double),
             QgsField('buffer_m', QVariant.Double),
             QgsField('status', QVariant.String),
-            QgsField('intersection', QVariant.String)
+            QgsField('intersection', QVariant.String),
+            QgsField('shadow_status', QVariant.String),  # New field for shadow analysis
+            QgsField('shadowed_by', QVariant.String)     # Which obstacle causes the shadow
         ]
         critical_layer.dataProvider().addAttributes(critical_fields)
         critical_layer.updateFields()
@@ -497,6 +534,16 @@ class TOFPA:
         safe_layer = QgsVectorLayer(f"PointZ?crs={crs.authid()}", "Safe_Obstacles", "memory")
         safe_layer.dataProvider().addAttributes(critical_fields)
         safe_layer.updateFields()
+        
+        # Shadowed obstacles layer (orange/purple)
+        shadowed_layer = QgsVectorLayer(f"PointZ?crs={crs.authid()}", "Shadowed_Obstacles", "memory")
+        shadowed_layer.dataProvider().addAttributes(critical_fields)
+        shadowed_layer.updateFields()
+        
+        # Visible (non-shadowed) critical obstacles layer (dark red)
+        visible_layer = QgsVectorLayer(f"PointZ?crs={crs.authid()}", "Visible_Critical_Obstacles", "memory")
+        visible_layer.dataProvider().addAttributes(critical_fields)
+        visible_layer.updateFields()
         
         # Buffer zones layer (yellow)
         buffer_layer = QgsVectorLayer(f"PolygonZ?crs={crs.authid()}", "Obstacle_Buffers", "memory")
@@ -511,6 +558,8 @@ class TOFPA:
         return {
             'critical_layer': critical_layer,
             'safe_layer': safe_layer,
+            'shadowed_layer': shadowed_layer,
+            'visible_layer': visible_layer,
             'buffer_layer': buffer_layer
         }
 
@@ -556,12 +605,15 @@ class TOFPA:
         # Add to appropriate layer
         obstacle_feature = QgsFeature()
         obstacle_feature.setGeometry(QgsGeometry(obstacle_point))
+        # Update obstacle feature attributes to include shadow fields (initially empty)
         obstacle_feature.setAttributes([
             int(feature.id()),
             obstacle_height,
             buffer_distance,
             "CRITICAL" if is_critical else "SAFE",
-            intersection_type
+            intersection_type,
+            "",  # shadow_status - will be updated in shadow analysis
+            ""   # shadowed_by - will be updated in shadow analysis
         ])
         
         # Add buffer feature
@@ -584,8 +636,216 @@ class TOFPA:
         return {
             'is_critical': is_critical,
             'height': obstacle_height,
-            'intersection_type': intersection_type
+            'intersection_type': intersection_type,
+            'obstacle_point': obstacle_point  # Add obstacle point for shadow analysis
         }
+
+    def _perform_shadow_analysis(self, obstacles_data, tofpa_surface_layer, shadow_tolerance=5.0):
+        """
+        Perform shadow analysis to determine which critical obstacles are shadowed by others.
+        
+        Shadow analysis logic:
+        1. Get the takeoff reference point (threshold or runway start)
+        2. For each critical obstacle, check if any other obstacle closer to takeoff point
+           and higher creates a shadow (blocks line of sight)
+        3. Calculate line of sight angles and determine shadowing relationships
+        """
+        # Get takeoff reference point from TOFPA surface (use the starting point)
+        takeoff_point = self._get_takeoff_reference_point(tofpa_surface_layer)
+        if not takeoff_point:
+            return {'shadowed_obstacles': [], 'visible_obstacles': obstacles_data}
+        
+        # Filter only critical obstacles for shadow analysis
+        critical_obstacles = [obs for obs in obstacles_data if obs['is_critical']]
+        
+        shadowed_obstacles = []
+        visible_obstacles = []
+        
+        for obstacle in critical_obstacles:
+            is_shadowed, shadowing_obstacle = self._is_obstacle_shadowed(
+                obstacle, critical_obstacles, takeoff_point, shadow_tolerance
+            )
+            
+            if is_shadowed:
+                obstacle['shadow_status'] = 'SHADOWED'
+                obstacle['shadowed_by'] = f"Obstacle ID {shadowing_obstacle['feature'].id()}"
+                shadowed_obstacles.append(obstacle)
+            else:
+                obstacle['shadow_status'] = 'VISIBLE'
+                obstacle['shadowed_by'] = ''
+                visible_obstacles.append(obstacle)
+        
+        # Include non-critical obstacles as visible
+        non_critical_obstacles = [obs for obs in obstacles_data if not obs['is_critical']]
+        for obstacle in non_critical_obstacles:
+            obstacle['shadow_status'] = 'NOT_APPLICABLE'
+            obstacle['shadowed_by'] = ''
+        
+        visible_obstacles.extend(non_critical_obstacles)
+        
+        return {
+            'shadowed_obstacles': shadowed_obstacles,
+            'visible_obstacles': visible_obstacles,
+            'takeoff_point': takeoff_point
+        }
+
+    def _get_takeoff_reference_point(self, tofpa_surface_layer):
+        """Get the takeoff reference point from TOFPA surface layer"""
+        try:
+            # Get the first feature from TOFPA surface
+            for feature in tofpa_surface_layer.getFeatures():
+                geom = feature.geometry()
+                if geom.type() == QgsWkbTypes.PolygonGeometry:
+                    # Get the centroid of the starting edge of the TOFPA surface
+                    # The TOFPA surface is typically oriented with takeoff point at one end
+                    vertices = geom.asPolygon()[0]  # Get exterior ring
+                    if len(vertices) >= 4:
+                        # Use the average of the first two vertices (should be the starting edge)
+                        start_point1 = vertices[0]
+                        start_point2 = vertices[-2]  # Second to last (before closing vertex)
+                        takeoff_x = (start_point1.x() + start_point2.x()) / 2
+                        takeoff_y = (start_point1.y() + start_point2.y()) / 2
+                        takeoff_z = (start_point1.z() + start_point2.z()) / 2 if start_point1.is3D() else 0
+                        return QgsPoint(takeoff_x, takeoff_y, takeoff_z)
+            return None
+        except Exception as e:
+            print(f"Error getting takeoff reference point: {e}")
+            return None
+
+    def _is_obstacle_shadowed(self, target_obstacle, all_obstacles, takeoff_point, shadow_tolerance=5.0):
+        """
+        Check if target obstacle is shadowed by any other obstacle.
+        
+        An obstacle is shadowed if:
+        1. Another obstacle is closer to the takeoff point
+        2. The other obstacle is higher
+        3. The other obstacle is within the line of sight cone (angular tolerance)
+        """
+        target_point = target_obstacle['point']
+        target_height = target_obstacle['height']
+        
+        # Calculate distance and angle from takeoff to target obstacle
+        target_distance = takeoff_point.distance(target_point)
+        target_angle = self._calculate_bearing(takeoff_point, target_point)
+        
+        for other_obstacle in all_obstacles:
+            if other_obstacle['feature'].id() == target_obstacle['feature'].id():
+                continue  # Skip self
+            
+            other_point = other_obstacle['point']
+            other_height = other_obstacle['height']
+            
+            # Check if other obstacle is closer to takeoff point
+            other_distance = takeoff_point.distance(other_point)
+            if other_distance >= target_distance:
+                continue  # Other obstacle is further, can't shadow
+            
+            # Check if other obstacle is higher
+            if other_height <= target_height:
+                continue  # Other obstacle is lower, can't shadow
+            
+            # Check if other obstacle is within angular tolerance (shadow cone)
+            other_angle = self._calculate_bearing(takeoff_point, other_point)
+            angular_difference = abs(target_angle - other_angle)
+            
+            # Handle angle wraparound (359° vs 1°)
+            if angular_difference > 180:
+                angular_difference = 360 - angular_difference
+            
+            # Use configurable tolerance for shadowing
+            if angular_difference <= shadow_tolerance:
+                # Check elevation angle to determine if shadow is significant
+                if self._check_elevation_shadow(takeoff_point, target_point, target_height, 
+                                               other_point, other_height):
+                    return True, other_obstacle
+        
+        return False, None
+
+    def _calculate_bearing(self, from_point, to_point):
+        """Calculate bearing (azimuth) from one point to another in degrees"""
+        try:
+            return from_point.azimuth(to_point)
+        except:
+            # Fallback calculation if azimuth method fails
+            dx = to_point.x() - from_point.x()
+            dy = to_point.y() - from_point.y()
+            return (atan2(dx, dy) * 180 / pi) % 360
+
+    def _check_elevation_shadow(self, takeoff_point, target_point, target_height, 
+                               shadow_point, shadow_height):
+        """
+        Check if the shadowing obstacle actually blocks the line of sight to target obstacle
+        based on elevation angles.
+        """
+        try:
+            # Calculate horizontal distances
+            target_distance = takeoff_point.distance(target_point)
+            shadow_distance = takeoff_point.distance(shadow_point)
+            
+            if target_distance <= 0 or shadow_distance <= 0:
+                return False
+            
+            # Calculate elevation angles from takeoff point
+            takeoff_height = takeoff_point.z() if takeoff_point.is3D() else 0
+            
+            target_elevation_angle = atan((target_height - takeoff_height) / target_distance) * 180 / pi
+            shadow_elevation_angle = atan((shadow_height - takeoff_height) / shadow_distance) * 180 / pi
+            
+            # Target is shadowed if shadow obstacle has higher elevation angle
+            return shadow_elevation_angle > target_elevation_angle
+            
+        except Exception as e:
+            print(f"Error in elevation shadow check: {e}")
+            return False
+
+    def _apply_shadow_results(self, layers_info, shadow_results):
+        """Apply shadow analysis results to create shadowed and visible obstacle layers"""
+        try:
+            shadowed_obstacles = shadow_results.get('shadowed_obstacles', [])
+            visible_obstacles = shadow_results.get('visible_obstacles', [])
+            
+            # Create features for shadowed obstacles
+            shadowed_features = []
+            for obstacle in shadowed_obstacles:
+                if obstacle['is_critical']:  # Only process critical obstacles for shadow layers
+                    feature = QgsFeature()
+                    feature.setGeometry(QgsGeometry(obstacle['point']))
+                    feature.setAttributes([
+                        int(obstacle['feature'].id()),
+                        obstacle['height'],
+                        10.0,  # default buffer
+                        "CRITICAL",
+                        obstacle['obstacle_info']['intersection_type'],
+                        obstacle['shadow_status'],
+                        obstacle['shadowed_by']
+                    ])
+                    shadowed_features.append(feature)
+            
+            # Create features for visible critical obstacles
+            visible_features = []
+            for obstacle in visible_obstacles:
+                if obstacle['is_critical']:  # Only process critical obstacles for visible layers
+                    feature = QgsFeature()
+                    feature.setGeometry(QgsGeometry(obstacle['point']))
+                    feature.setAttributes([
+                        int(obstacle['feature'].id()),
+                        obstacle['height'],
+                        10.0,  # default buffer
+                        "CRITICAL",
+                        obstacle['obstacle_info']['intersection_type'],
+                        obstacle.get('shadow_status', 'VISIBLE'),
+                        obstacle.get('shadowed_by', '')
+                    ])
+                    visible_features.append(feature)
+            
+            # Add features to respective layers
+            if shadowed_features:
+                layers_info['shadowed_layer'].dataProvider().addFeatures(shadowed_features)
+            if visible_features:
+                layers_info['visible_layer'].dataProvider().addFeatures(visible_features)
+                
+        except Exception as e:
+            print(f"Error applying shadow results: {e}")
 
     def _finalize_obstacles_layers(self, layers_info):
         """Add obstacles layers to map and apply styling"""
@@ -605,6 +865,26 @@ class TOFPA:
         })
         layers_info['safe_layer'].renderer().setSymbol(safe_symbol)
         
+        # Style shadowed obstacles (orange/purple)
+        if 'shadowed_layer' in layers_info and layers_info['shadowed_layer'].featureCount() > 0:
+            shadowed_symbol = QgsMarkerSymbol.createSimple({
+                'color': '255,165,0,255',  # Orange
+                'size': '4',
+                'outline_color': '0,0,0,255',
+                'outline_width': '0.5'
+            })
+            layers_info['shadowed_layer'].renderer().setSymbol(shadowed_symbol)
+        
+        # Style visible critical obstacles (dark red)
+        if 'visible_layer' in layers_info and layers_info['visible_layer'].featureCount() > 0:
+            visible_symbol = QgsMarkerSymbol.createSimple({
+                'color': '139,0,0,255',  # Dark red
+                'size': '5',
+                'outline_color': '0,0,0,255',
+                'outline_width': '0.5'
+            })
+            layers_info['visible_layer'].renderer().setSymbol(visible_symbol)
+        
         # Style buffer zones (yellow with transparency)
         buffer_symbol = QgsFillSymbol.createSimple({
             'color': '255,255,0,100',  # Yellow with transparency
@@ -613,12 +893,21 @@ class TOFPA:
         })
         layers_info['buffer_layer'].renderer().setSymbol(buffer_symbol)
         
-        # Add all layers to map
-        QgsProject.instance().addMapLayers([
+        # Prepare layers list for map addition
+        layers_to_add = [
             layers_info['critical_layer'],
             layers_info['safe_layer'], 
             layers_info['buffer_layer']
-        ])
+        ]
+        
+        # Add shadow analysis layers if they have features
+        if 'shadowed_layer' in layers_info and layers_info['shadowed_layer'].featureCount() > 0:
+            layers_to_add.append(layers_info['shadowed_layer'])
+        if 'visible_layer' in layers_info and layers_info['visible_layer'].featureCount() > 0:
+            layers_to_add.append(layers_info['visible_layer'])
+        
+        # Add all layers to map
+        QgsProject.instance().addMapLayers(layers_to_add)
 
     def export_to_kmz(self, layers):
         """Export layers to KMZ format for Google Earth with proper styling"""
