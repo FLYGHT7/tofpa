@@ -110,6 +110,9 @@
          <property name="value">
           <double>180.000000000000000</double>
          </property>
+         <property name="suffix">
+          <string> m</string>
+         </property>
         </widget>
        </item>
        <item row="1" column="0">
@@ -136,6 +139,9 @@
          <property name="value">
           <double>1800.000000000000000</double>
          </property>
+         <property name="suffix">
+          <string> m</string>
+         </property>
         </widget>
        </item>
        <item row="2" column="0">
@@ -158,6 +164,9 @@
          </property>
          <property name="decimals">
           <number>8</number>
+         </property>
+         <property name="suffix">
+          <string> m</string>
          </property>
         </widget>
        </item>
@@ -182,6 +191,9 @@
          <property name="decimals">
           <number>8</number>
          </property>
+         <property name="suffix">
+          <string> m</string>
+         </property>
         </widget>
        </item>
        <item row="4" column="0">
@@ -203,6 +215,9 @@
          </property>
          <property name="decimals">
           <number>8</number>
+         </property>
+         <property name="suffix">
+          <string> m</string>
          </property>
         </widget>
        </item>
@@ -279,6 +294,9 @@
          <property name="value">
           <double>10.00</double>
          </property>
+         <property name="suffix">
+          <string> m</string>
+         </property>
         </widget>
        </item>
        <item row="2" column="0">
@@ -327,6 +345,9 @@
          </property>
          <property name="value">
           <double>5.00</double>
+         </property>
+         <property name="suffix">
+          <string> m</string>
          </property>
         </widget>
        </item>
@@ -386,12 +407,18 @@
          <property name="text">
           <string>Export to KMZ</string>
          </property>
+         <property name="toolTip">
+          <string>Export the TOFPA surface as a Google Earth KMZ file</string>
+         </property>
         </widget>
        </item>
        <item>
         <widget class="QCheckBox" name="exportToAixmCheckBox">
          <property name="text">
           <string>Export to AIXM 5.1.1</string>
+         </property>
+         <property name="toolTip">
+          <string>Export the TOFPA surface in AIXM 5.1.1 format for AIS submission</string>
          </property>
         </widget>
        </item>
@@ -431,6 +458,12 @@
         <property name="text">
          <string>Calculate</string>
         </property>
+        <property name="default">
+         <bool>true</bool>
+        </property>
+        <property name="toolTip">
+         <string>Run the TOFPA surface calculation (Enter)</string>
+        </property>
        </widget>
       </item>
       <item>
@@ -445,6 +478,28 @@
    </layout>
   </widget>
  </widget>
+ <tabstops>
+  <tabstop>runwayLayerCombo</tabstop>
+  <tabstop>thresholdLayerCombo</tabstop>
+  <tabstop>useSelectedFeatureCheckBox</tabstop>
+  <tabstop>includeObstaclesCheckBox</tabstop>
+  <tabstop>initialWidthSpin</tabstop>
+  <tabstop>maxWidthSpin</tabstop>
+  <tabstop>clearwayLengthSpin</tabstop>
+  <tabstop>initialElevationSpin</tabstop>
+  <tabstop>endElevationSpin</tabstop>
+  <tabstop>directionCombo</tabstop>
+  <tabstop>obstaclesLayerCombo</tabstop>
+  <tabstop>obstacleBufferSpin</tabstop>
+  <tabstop>obstacleHeightFieldCombo</tabstop>
+  <tabstop>minObstacleHeightSpin</tabstop>
+  <tabstop>enableShadowAnalysisCheckBox</tabstop>
+  <tabstop>shadowToleranceSpin</tabstop>
+  <tabstop>exportToKmzCheckBox</tabstop>
+  <tabstop>exportToAixmCheckBox</tabstop>
+  <tabstop>calculateButton</tabstop>
+  <tabstop>cancelButton</tabstop>
+ </tabstops>
  <customwidgets>
   <customwidget>
    <class>QgsMapLayerComboBox</class>

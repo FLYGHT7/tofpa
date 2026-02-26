@@ -48,6 +48,10 @@ QPushButton#calculateButton:disabled {
 QPushButton#cancelButton {
     padding: 4px 12px;
 }
+QDoubleSpinBox[invalid="true"] {
+    background-color: #ffcccc;
+    border: 1px solid #cc0000;
+}
 """
 
 
@@ -216,13 +220,13 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             logger.debug("Obstacle height field update failed", exc_info=True)
 
     def _validate_widths(self):
-        """UI-08: Inline validation — max width must be >= initial width."""
+        """UI-08/UI-11: Inline validation via QSS dynamic property — max width must be >= initial width."""
         try:
             invalid = self.maxWidthSpin.value() < self.initialWidthSpin.value()
-            err_style = "background-color: #ffcccc;"
-            ok_style = ""
-            self.maxWidthSpin.setStyleSheet(err_style if invalid else ok_style)
-            self.initialWidthSpin.setStyleSheet(err_style if invalid else ok_style)
+            for spin in (self.maxWidthSpin, self.initialWidthSpin):
+                spin.setProperty("invalid", invalid)
+                spin.style().unpolish(spin)
+                spin.style().polish(spin)
             self.calculateButton.setEnabled(not invalid)
             self.maxWidthSpin.setToolTip(
                 "Maximum width must be \u2265 initial width" if invalid
@@ -236,11 +240,11 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         try:
             self.obstaclesGroup.setEnabled(enabled)
             if not enabled:
-                # Clear obstacles layer selection when disabled
-                self.obstaclesLayerCombo.setCurrentIndex(-1)
-                # Also disable shadow analysis when obstacles are disabled
+                # UI-13: Do NOT clear layer selection — preserve it so the user
+                # doesn't lose their choice when temporarily disabling the group.
+                # get_parameters() already ignores it when include_obstacles=False.
                 self.enableShadowAnalysisCheckBox.setChecked(False)
-            
+
             # Update shadow controls based on obstacles state
             self._toggle_shadow_controls(self.enableShadowAnalysisCheckBox.isChecked())
         except Exception:
