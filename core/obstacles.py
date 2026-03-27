@@ -13,7 +13,7 @@ catches them and shows them via the QGIS message bar.
 from __future__ import annotations
 
 import logging
-from math import atan, atan2, pi
+from math import atan, atan2, cos, pi, radians, sin
 from typing import Any, Optional
 
 from qgis.core import (
@@ -31,6 +31,30 @@ from qgis.core import (
 from ..utils.compat import FIELD_INT, FIELD_DOUBLE, FIELD_STRING, WKB_POLYGON_GEOM  # MIGA-01, MIGA-02
 
 logger = logging.getLogger("TOFPA.obstacles")
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for 3-D OCS elevation computation  (BUG-B fix, C-1)
+# ---------------------------------------------------------------------------
+
+def _distance_along_axis(obstacle_pt, der_pt, azimuth_deg: float) -> float:
+    """Return the signed distance (metres) from *der_pt* to *obstacle_pt* projected
+    onto the takeoff axis defined by *azimuth_deg* (degrees, 0 = North)."""
+    az = radians(azimuth_deg)
+    dx = obstacle_pt.x() - der_pt.x()
+    dy = obstacle_pt.y() - der_pt.y()
+    return dx * sin(az) + dy * cos(az)
+
+
+def _ocs_elevation_at_distance(d: float, z_der: float, climb_gradient: float) -> float:
+    """Return the OCS surface elevation (MSL) at horizontal distance *d* from the DER.
+
+    Points behind the DER (d < 0) are evaluated at *z_der* — the surface does
+    not extend backwards.
+    """
+    if d < 0:
+        return z_der
+    return z_der + d * climb_gradient
 
 
 class ObstacleAnalyzer:
@@ -57,6 +81,7 @@ class ObstacleAnalyzer:
             QgsField("buffer_m", FIELD_DOUBLE),
             QgsField("status", FIELD_STRING),
             QgsField("intersection", FIELD_STRING),
+            QgsField("penetration_m", FIELD_DOUBLE),  # C-4: MSL elevation excess above OCS (> 0 = critical)
             QgsField("shadow_status", FIELD_STRING),
             QgsField("shadowed_by", FIELD_STRING),
         ]
@@ -101,11 +126,23 @@ class ObstacleAnalyzer:
         min_height: float,
         tofpa_surface_layer,
         layers_info: dict,
+        # C-2: optional 3-D OCS parameters; when provided, determines
+        # criticality by comparing obstacle MSL elevation to OCS elevation.
+        der_point=None,
+        der_elevation: float = 0.0,
+        takeoff_azimuth: float = 0.0,
+        climb_gradient: float = 0.012,
     ) -> dict:
         """Analyze a single obstacle against the TOFPA surface.
 
         Returns a dict with keys: ``is_critical``, ``height``,
-        ``intersection_type``, ``obstacle_point``.
+        ``intersection_type``, ``obstacle_point``, ``penetration_m``.
+
+        When *der_point* is supplied, criticality is determined by a proper
+        ICAO 3-D elevation comparison: the obstacle is critical only if its
+        Z value (MSL elevation) exceeds the OCS surface elevation at its XY
+        position (ICAO Doc 8168 §3.1.3).  Without *der_point* the previous
+        2-D footprint-only logic is used as fallback.
 
         Raises ``ValueError`` for features with invalid geometry.
         """
@@ -134,14 +171,26 @@ class ObstacleAnalyzer:
             .buffer(buffer_distance, 16)
         )
 
-        # Intersection test
-        is_critical = False
+        # 1) 2-D footprint check — determine if obstacle is inside the surface area
+        intersects_footprint = False
         intersection_type = "None"
         for tofpa_feature in tofpa_surface_layer.getFeatures():
             if buffer_geom.intersects(tofpa_feature.geometry()):
-                is_critical = True
+                intersects_footprint = True
                 intersection_type = "Buffer intersects TOFPA surface"
                 break
+
+        # 2) Criticality: 3-D comparison when DER context is supplied (BUG-B fix)
+        is_critical = False
+        penetration_m = 0.0
+        if intersects_footprint and der_point is not None:
+            d = _distance_along_axis(obstacle_point, der_point, takeoff_azimuth)
+            z_ocs = _ocs_elevation_at_distance(d, der_elevation, climb_gradient)
+            penetration_m = obstacle_point.z() - z_ocs
+            is_critical = penetration_m > 0
+        elif intersects_footprint:
+            # Fallback: no 3-D data provided → 2-D behaviour (all footprint = critical)
+            is_critical = True
 
         # Build obstacle feature (shadow fields populated later)
         obstacle_feature = QgsFeature()
@@ -152,6 +201,7 @@ class ObstacleAnalyzer:
             buffer_distance,
             "CRITICAL" if is_critical else "SAFE",
             intersection_type,
+            round(penetration_m, 3),  # penetration_m
             "",  # shadow_status
             "",  # shadowed_by
         ])
@@ -173,6 +223,7 @@ class ObstacleAnalyzer:
             "height": obstacle_height,
             "intersection_type": intersection_type,
             "obstacle_point": obstacle_point,
+            "penetration_m": round(penetration_m, 3),
         }
 
     # ------------------------------------------------------------------
@@ -352,6 +403,7 @@ class ObstacleAnalyzer:
                         buffer_distance,
                         "CRITICAL",
                         obstacle["obstacle_info"]["intersection_type"],
+                        obstacle["obstacle_info"].get("penetration_m", 0.0),
                         obstacle["shadow_status"],
                         obstacle["shadowed_by"],
                     ])
@@ -367,6 +419,7 @@ class ObstacleAnalyzer:
                         buffer_distance,
                         "CRITICAL",
                         obstacle["obstacle_info"]["intersection_type"],
+                        obstacle["obstacle_info"].get("penetration_m", 0.0),
                         obstacle.get("shadow_status", "VISIBLE"),
                         obstacle.get("shadowed_by", ""),
                     ])

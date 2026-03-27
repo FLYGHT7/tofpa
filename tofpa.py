@@ -337,19 +337,25 @@ class TOFPA:
         pt_01D.setZ(ze)
         logger.debug("pt_01D (start point): %s, %s, %s", pt_01D.x(), pt_01D.y(), pt_01D.z())
         pt_01DL = pt_01D.project(width_tofpa/2, azimuth+90)  # Use azimuth for perpendicular direction
+        pt_01DL.setZ(pt_01D.z())  # QgsPoint.project() returns 2D point; restore Z explicitly
         pt_01DR = pt_01D.project(width_tofpa/2, azimuth-90)  # Use azimuth for perpendicular direction
+        pt_01DR.setZ(pt_01D.z())
         
         # Distance to reach maximum width (from original script - ALL use azimuth for forward projection)
         pt_02D = pt_01D.project(((max_width_tofpa/2-width_tofpa/2)/TOFPA_DIVERGENCE_RATIO), azimuth)
         pt_02D.setZ(ze+((max_width_tofpa/2-width_tofpa/2)/TOFPA_DIVERGENCE_RATIO)*TOFPA_CLIMB_GRADIENT)
         pt_02DL = pt_02D.project(max_width_tofpa/2, azimuth+90)  # Use azimuth for perpendicular
+        pt_02DL.setZ(pt_02D.z())  # QgsPoint.project() returns 2D point; restore Z explicitly
         pt_02DR = pt_02D.project(max_width_tofpa/2, azimuth-90)  # Use azimuth for perpendicular
+        pt_02DR.setZ(pt_02D.z())
         
         # Distance to end of TakeOff Climb Surface (from original script - ALL use azimuth for forward projection)
         pt_03D = pt_01D.project(TOFPA_SURFACE_LENGTH, azimuth)
         pt_03D.setZ(ze+TOFPA_SURFACE_LENGTH*TOFPA_CLIMB_GRADIENT)
         pt_03DL = pt_03D.project(max_width_tofpa/2, azimuth+90)  # Use azimuth for perpendicular
+        pt_03DL.setZ(pt_03D.z())  # QgsPoint.project() returns 2D point; restore Z explicitly
         pt_03DR = pt_03D.project(max_width_tofpa/2, azimuth-90)  # Use azimuth for perpendicular
+        pt_03DR.setZ(pt_03D.z())
         
         list_pts.extend((pt_0D, pt_01D, pt_01DL, pt_01DR, pt_02D, pt_02DL, pt_02DR, pt_03D, pt_03DL, pt_03DR))
         
@@ -430,6 +436,10 @@ class TOFPA:
                     obs_params,
                     v_layer,      # TOFPA surface for intersection analysis
                     use_selected_feature,
+                    der_point=pt_01D,
+                    der_elevation=ze,
+                    takeoff_azimuth=azimuth,
+                    climb_gradient=TOFPA_CLIMB_GRADIENT,
                 )
                 if obstacles_info:
                     obstacles_layers = obstacles_info['layers']
@@ -487,12 +497,20 @@ class TOFPA:
         obs_params: ObstacleParams,
         tofpa_surface_layer,
         use_selected_feature: bool,
+        der_point=None,
+        der_elevation: float = 0.0,
+        takeoff_azimuth: float = 0.0,
+        climb_gradient: float = 0.012,
     ) -> dict:
         """
         Process survey obstacles and analyse their impact on the TOFPA surface.
 
         Delegates all geometry / shadow work to ``ObstacleAnalyzer``; this method
         only handles QGIS layer look-up and feature retrieval.
+
+        *der_point*, *der_elevation*, *takeoff_azimuth*, *climb_gradient* are
+        forwarded to ``ObstacleAnalyzer.analyze_single`` for ICAO 3-D penetration
+        comparison (BUG-B fix).  If omitted the analyser falls back to 2-D.
         """
         obstacles_layer = QgsProject.instance().mapLayer(obs_params.obstacles_layer_id)
         if not obstacles_layer:
@@ -533,6 +551,10 @@ class TOFPA:
                     obs_params.min_obstacle_height,
                     tofpa_surface_layer,
                     layers_info,
+                    der_point=der_point,
+                    der_elevation=der_elevation,
+                    takeoff_azimuth=takeoff_azimuth,
+                    climb_gradient=climb_gradient,
                 )
                 total_obstacles += 1
                 if obstacle_info["is_critical"]:

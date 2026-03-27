@@ -143,6 +143,10 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         self.initialWidthSpin.valueChanged.connect(self._validate_widths)
         self.maxWidthSpin.valueChanged.connect(self._validate_widths)
 
+        # B-2: Connect elevation cross-validation
+        self.endElevationSpin.valueChanged.connect(self._validate_elevations)
+        self.initialElevationSpin.valueChanged.connect(self._validate_elevations)
+
         # Connect signals
         self.calculateButton.clicked.connect(self.on_calculate_clicked)
         self.cancelButton.clicked.connect(self.on_close_clicked)
@@ -218,6 +222,28 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
                         break
         except Exception:
             logger.debug("Obstacle height field update failed", exc_info=True)
+
+    def _validate_elevations(self) -> None:
+        """B-2: Warn if DER Elevation is 0 while THR Elevation is non-zero (likely unfilled field)."""
+        try:
+            der = self.endElevationSpin.value()
+            thr = self.initialElevationSpin.value()
+            suspicious = (der == 0.0 and abs(thr) > 1.0)
+            self.endElevationSpin.setProperty("invalid", suspicious)
+            self.endElevationSpin.style().unpolish(self.endElevationSpin)
+            self.endElevationSpin.style().polish(self.endElevationSpin)
+            if suspicious:
+                self.endElevationSpin.setToolTip(
+                    "\u26a0 DER Elevation is 0 while THR Elevation is non-zero. "
+                    "Please verify \u2014 the TOFPA surface will start at sea level."
+                )
+            else:
+                self.endElevationSpin.setToolTip(
+                    "Elevation at the Departure End of the Runway (ZE). "
+                    "The TOFPA OCS surface starts from this elevation and climbs at 1.2\u2009\u2014 ICAO Doc 8168 Vol I \u00a73.1.3."
+                )
+        except Exception:
+            logger.debug("Elevation validation failed", exc_info=True)
 
     def _validate_widths(self):
         """UI-08/UI-11: Inline validation via QSS dynamic property — max width must be >= initial width."""
