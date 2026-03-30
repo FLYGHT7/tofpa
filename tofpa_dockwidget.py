@@ -1,12 +1,12 @@
 """
 FLYGHT7
 """
+import logging
 import os
 
 from qgis.PyQt import uic
 from qgis.PyQt.QtCore import pyqtSignal
-from qgis.PyQt.QtWidgets import QDockWidget
-from qgis.core import QgsMapLayerProxyModel, QgsWkbTypes
+from qgis.PyQt.QtWidgets import QDockWidget, QScrollArea
 from .utils.compat import (  # MIGA-01, MIGA-02
     FIELD_INT, FIELD_DOUBLE,
     WKB_LINE_GEOM, WKB_POINT_GEOM, WKB_POLYGON_GEOM,
@@ -17,6 +17,42 @@ FORM_CLASS, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'tofpa_panel_base.ui'))
 
 logger = logging.getLogger('TOFPA.ui')
+
+# UI-06: QSS stylesheet
+_TOFPA_STYLE = """
+QGroupBox {
+    font-weight: bold;
+    border: 1px solid #aaaaaa;
+    border-radius: 4px;
+    margin-top: 8px;
+    padding-top: 4px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 8px;
+}
+QPushButton#calculateButton {
+    background-color: #2c7bb6;
+    color: white;
+    border-radius: 3px;
+    padding: 4px 12px;
+    font-weight: bold;
+}
+QPushButton#calculateButton:hover {
+    background-color: #1a5f8e;
+}
+QPushButton#calculateButton:disabled {
+    background-color: #888888;
+    color: #cccccc;
+}
+QPushButton#cancelButton {
+    padding: 4px 12px;
+}
+QDoubleSpinBox[invalid="true"] {
+    background-color: #ffcccc;
+    border: 1px solid #cc0000;
+}
+"""
 
 
 class TofpaDockWidget(QDockWidget, FORM_CLASS):
@@ -29,7 +65,23 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         super(TofpaDockWidget, self).__init__(parent)
         self.iface = iface
         self.setupUi(self)
-        
+
+        # UI-01: Wrap content in QScrollArea for small/high-DPI screens
+        scroll = QScrollArea()
+        scroll.setObjectName("tofpaScrollArea")
+        scroll.setWidgetResizable(True)
+        try:
+            from qgis.PyQt.QtCore import Qt
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.AlwaysOff)
+        except AttributeError:
+            from qgis.PyQt.QtCore import Qt
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # type: ignore[attr-defined]
+        scroll.setWidget(self.dockWidgetContents)
+        self.setWidget(scroll)
+
+        # UI-06: Apply stylesheet
+        self.setStyleSheet(_TOFPA_STYLE)
+
         # Configure layer combo boxes with specific geometry filters
         # Runway Layer: Only LineString geometries (lines)
         self.runwayLayerCombo.setFilters(LAYER_FILTER_VECTOR)
@@ -87,6 +139,14 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         self._toggle_obstacles_group(False)
         self._toggle_shadow_controls(False)
         
+        # UI-08: Connect inline width validation
+        self.initialWidthSpin.valueChanged.connect(self._validate_widths)
+        self.maxWidthSpin.valueChanged.connect(self._validate_widths)
+
+        # B-2: Connect elevation cross-validation
+        self.endElevationSpin.valueChanged.connect(self._validate_elevations)
+        self.initialElevationSpin.valueChanged.connect(self._validate_elevations)
+
         # Connect signals
         self.calculateButton.clicked.connect(self.on_calculate_clicked)
         self.cancelButton.clicked.connect(self.on_close_clicked)
@@ -163,16 +223,54 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         except Exception:
             logger.debug("Obstacle height field update failed", exc_info=True)
 
+    def _validate_elevations(self) -> None:
+        """B-2: Warn if DER Elevation is 0 while THR Elevation is non-zero (likely unfilled field)."""
+        try:
+            der = self.endElevationSpin.value()
+            thr = self.initialElevationSpin.value()
+            suspicious = (der == 0.0 and abs(thr) > 1.0)
+            self.endElevationSpin.setProperty("invalid", suspicious)
+            self.endElevationSpin.style().unpolish(self.endElevationSpin)
+            self.endElevationSpin.style().polish(self.endElevationSpin)
+            if suspicious:
+                self.endElevationSpin.setToolTip(
+                    "\u26a0 DER Elevation is 0 while THR Elevation is non-zero. "
+                    "Please verify \u2014 the TOFPA surface will start at sea level."
+                )
+            else:
+                self.endElevationSpin.setToolTip(
+                    "Elevation at the Departure End of the Runway (ZE). "
+                    "The TOFPA OCS surface starts from this elevation and climbs at 1.2\u2009\u2014 ICAO Doc 8168 Vol I \u00a73.1.3."
+                )
+        except Exception:
+            logger.debug("Elevation validation failed", exc_info=True)
+
+    def _validate_widths(self):
+        """UI-08/UI-11: Inline validation via QSS dynamic property — max width must be >= initial width."""
+        try:
+            invalid = self.maxWidthSpin.value() < self.initialWidthSpin.value()
+            for spin in (self.maxWidthSpin, self.initialWidthSpin):
+                spin.setProperty("invalid", invalid)
+                spin.style().unpolish(spin)
+                spin.style().polish(spin)
+            self.calculateButton.setEnabled(not invalid)
+            self.maxWidthSpin.setToolTip(
+                "Maximum width must be \u2265 initial width" if invalid
+                else "Maximum width of the TOFPA surface at the end of the climb. Typical: 1800 m"
+            )
+        except Exception:
+            logger.debug("Width validation failed", exc_info=True)
+
     def _toggle_obstacles_group(self, enabled):
         """Enable or disable the obstacles group based on checkbox state"""
         try:
             self.obstaclesGroup.setEnabled(enabled)
             if not enabled:
-                # Clear obstacles layer selection when disabled
-                self.obstaclesLayerCombo.setCurrentIndex(-1)
-                # Also disable shadow analysis when obstacles are disabled
+                # UI-13: Do NOT clear layer selection — preserve it so the user
+                # doesn't lose their choice when temporarily disabling the group.
+                # get_parameters() already ignores it when include_obstacles=False.
                 self.enableShadowAnalysisCheckBox.setChecked(False)
-            
+
             # Update shadow controls based on obstacles state
             self._toggle_shadow_controls(self.enableShadowAnalysisCheckBox.isChecked())
         except Exception:

@@ -36,6 +36,9 @@
          <property name="text">
           <string>Runway Layer:</string>
          </property>
+         <property name="toolTip">
+          <string>Vector layer containing the runway centreline (LineString geometry)</string>
+         </property>
         </widget>
        </item>
        <item row="0" column="1">
@@ -46,32 +49,31 @@
          <property name="text">
           <string>Threshold Layer:</string>
          </property>
+         <property name="toolTip">
+          <string>Vector layer containing the runway threshold point (Point geometry)</string>
+         </property>
         </widget>
        </item>
        <item row="1" column="1">
         <widget class="QgsMapLayerComboBox" name="thresholdLayerCombo"/>
        </item>
-       <item row="2" column="0">
-        <widget class="QLabel" name="obstaclesLabel">
-         <property name="text">
-          <string>Obstacles Layer:</string>
-         </property>
-        </widget>
-       </item>
-       <item row="2" column="1">
-        <widget class="QgsMapLayerComboBox" name="obstaclesLayerCombo"/>
-       </item>
-       <item row="3" column="0" colspan="2">
+       <item row="2" column="0" colspan="2">
         <widget class="QCheckBox" name="useSelectedFeatureCheckBox">
          <property name="text">
           <string>Use selected features only</string>
          </property>
+         <property name="toolTip">
+          <string>When checked, only the currently selected feature from each layer is used</string>
+         </property>
         </widget>
        </item>
-       <item row="4" column="0" colspan="2">
+       <item row="3" column="0" colspan="2">
         <widget class="QCheckBox" name="includeObstaclesCheckBox">
          <property name="text">
           <string>Include survey obstacles analysis</string>
+         </property>
+         <property name="toolTip">
+          <string>Enable ICAO obstacle analysis to identify critical obstacles within the TOFPA surface</string>
          </property>
         </widget>
        </item>
@@ -93,6 +95,9 @@
        </item>
        <item row="0" column="1">
         <widget class="QDoubleSpinBox" name="initialWidthSpin">
+         <property name="toolTip">
+          <string>Initial width of the TOFPA surface at the DER (ICAO Doc 8168 Vol I §3.1.3). Typical: 180 m</string>
+         </property>
          <property name="minimum">
           <double>0.000000000000000</double>
          </property>
@@ -105,6 +110,9 @@
          <property name="value">
           <double>180.000000000000000</double>
          </property>
+         <property name="suffix">
+          <string> m</string>
+         </property>
         </widget>
        </item>
        <item row="1" column="0">
@@ -116,6 +124,9 @@
        </item>
        <item row="1" column="1">
         <widget class="QDoubleSpinBox" name="maxWidthSpin">
+         <property name="toolTip">
+          <string>Maximum width of the TOFPA surface at the end of the climb. Typical: 1800 m</string>
+         </property>
          <property name="minimum">
           <double>0.000000000000000</double>
          </property>
@@ -128,6 +139,9 @@
          <property name="value">
           <double>1800.000000000000000</double>
          </property>
+         <property name="suffix">
+          <string> m</string>
+         </property>
         </widget>
        </item>
        <item row="2" column="0">
@@ -139,6 +153,9 @@
        </item>
        <item row="2" column="1">
         <widget class="QDoubleSpinBox" name="clearwayLengthSpin">
+         <property name="toolTip">
+          <string>Clearway (CWY) length before the DER. Set to 0 if no clearway exists (ICAO Doc 8168 Vol I §3.1.2)</string>
+         </property>
          <property name="minimum">
           <double>0.000000000000000</double>
          </property>
@@ -148,17 +165,23 @@
          <property name="decimals">
           <number>8</number>
          </property>
+         <property name="suffix">
+          <string> m</string>
+         </property>
         </widget>
        </item>
        <item row="3" column="0">
         <widget class="QLabel" name="initElevLabel">
          <property name="text">
-          <string>Initial Elevation (m):</string>
+          <string>THR Elevation (m):</string>
          </property>
         </widget>
        </item>
        <item row="3" column="1">
         <widget class="QDoubleSpinBox" name="initialElevationSpin">
+         <property name="toolTip">
+          <string>Elevation of the runway threshold (Z0). Used as the elevation of the threshold reference point (metres above MSL).</string>
+         </property>
          <property name="minimum">
           <double>-1000.000000000000000</double>
          </property>
@@ -167,17 +190,23 @@
          </property>
          <property name="decimals">
           <number>8</number>
+         </property>
+         <property name="suffix">
+          <string> m</string>
          </property>
         </widget>
        </item>
        <item row="4" column="0">
         <widget class="QLabel" name="endElevLabel">
          <property name="text">
-          <string>End Elevation (m):</string>
+          <string>DER Elevation (m):</string>
          </property>
         </widget>
        </item>       <item row="4" column="1">
         <widget class="QDoubleSpinBox" name="endElevationSpin">
+         <property name="toolTip">
+          <string>Elevation at the Departure End of the Runway (ZE). The TOFPA OCS surface starts from this elevation and climbs at 1.2% — ICAO Doc 8168 Vol I §3.1.3.</string>
+         </property>
          <property name="minimum">
           <double>-1000.000000000000000</double>
          </property>
@@ -186,6 +215,9 @@
          </property>
          <property name="decimals">
           <number>8</number>
+         </property>
+         <property name="suffix">
+          <string> m</string>
          </property>
         </widget>
        </item>
@@ -198,14 +230,17 @@
        </item>
        <item row="5" column="1">
         <widget class="QComboBox" name="directionCombo">
+         <property name="toolTip">
+          <string>Direction of takeoff relative to the runway feature geometry</string>
+         </property>
          <item>
           <property name="text">
-           <string>Start to End (0)</string>
+           <string>Takeoff toward runway end (→)</string>
           </property>
          </item>
          <item>
           <property name="text">
-           <string>End to Start (-1)</string>
+           <string>Takeoff toward runway start (←)</string>
           </property>
          </item>
         </widget>
@@ -220,14 +255,33 @@
       </property>
       <layout class="QFormLayout" name="formLayout_3">
        <item row="0" column="0">
-        <widget class="QLabel" name="obstacleBufferLabel">
+        <widget class="QLabel" name="obstaclesLabel">
          <property name="text">
-          <string>Safety Buffer (m):</string>
+          <string>Obstacles Layer:</string>
+         </property>
+         <property name="toolTip">
+          <string>Vector layer containing obstacle points or polygons to analyse</string>
          </property>
         </widget>
        </item>
        <item row="0" column="1">
+        <widget class="QgsMapLayerComboBox" name="obstaclesLayerCombo"/>
+       </item>
+       <item row="1" column="0">
+        <widget class="QLabel" name="obstacleBufferLabel">
+         <property name="text">
+          <string>Safety Buffer (m):</string>
+         </property>
+         <property name="toolTip">
+          <string>Horizontal safety buffer radius around each obstacle for intersection test</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
         <widget class="QDoubleSpinBox" name="obstacleBufferSpin">
+         <property name="toolTip">
+          <string>Horizontal safety buffer radius around each obstacle for intersection test</string>
+         </property>
          <property name="minimum">
           <double>0.000000000000000</double>
          </property>
@@ -240,31 +294,46 @@
          <property name="value">
           <double>10.00</double>
          </property>
+         <property name="suffix">
+          <string> m</string>
+         </property>
         </widget>
        </item>
-       <item row="1" column="0">
+       <item row="2" column="0">
         <widget class="QLabel" name="obstacleHeightFieldLabel">
          <property name="text">
           <string>Height Field:</string>
          </property>
+         <property name="toolTip">
+          <string>Field in the obstacle layer that contains the obstacle height (metres)</string>
+         </property>
         </widget>
        </item>
-       <item row="1" column="1">
+       <item row="2" column="1">
         <widget class="QComboBox" name="obstacleHeightFieldCombo">
+         <property name="toolTip">
+          <string>Field in the obstacle layer that contains the obstacle height (metres)</string>
+         </property>
          <property name="editable">
           <bool>true</bool>
          </property>
         </widget>
        </item>
-       <item row="2" column="0">
+       <item row="3" column="0">
         <widget class="QLabel" name="minObstacleHeightLabel">
          <property name="text">
           <string>Min Height (m):</string>
          </property>
+         <property name="toolTip">
+          <string>Obstacles below this height are ignored in the analysis</string>
+         </property>
         </widget>
        </item>
-       <item row="2" column="1">
+       <item row="3" column="1">
         <widget class="QDoubleSpinBox" name="minObstacleHeightSpin">
+         <property name="toolTip">
+          <string>Obstacles below this height are ignored in the analysis</string>
+         </property>
          <property name="minimum">
           <double>0.000000000000000</double>
          </property>
@@ -277,27 +346,36 @@
          <property name="value">
           <double>5.00</double>
          </property>
+         <property name="suffix">
+          <string> m</string>
+         </property>
         </widget>
        </item>
-       <item row="3" column="0" colspan="2">
+       <item row="4" column="0" colspan="2">
         <widget class="QCheckBox" name="enableShadowAnalysisCheckBox">
          <property name="text">
           <string>Enable shadow analysis</string>
          </property>
          <property name="toolTip">
-          <string>Analyze which critical obstacles are shadowed by others closer to takeoff point</string>
+          <string>Analyse which critical obstacles are shadowed (hidden) by closer, taller obstacles relative to the takeoff point</string>
          </property>
         </widget>
        </item>
-       <item row="4" column="0">
+       <item row="5" column="0">
         <widget class="QLabel" name="shadowToleranceLabel">
          <property name="text">
           <string>Shadow Tolerance (°):</string>
          </property>
+         <property name="toolTip">
+          <string>Angular tolerance in degrees for shadow cone calculation (ICAO shadow analysis)</string>
+         </property>
         </widget>
        </item>
-       <item row="4" column="1">
+       <item row="5" column="1">
         <widget class="QDoubleSpinBox" name="shadowToleranceSpin">
+         <property name="toolTip">
+          <string>Angular tolerance in degrees for shadow cone calculation (ICAO shadow analysis)</string>
+         </property>
          <property name="minimum">
           <double>0.500000000000000</double>
          </property>
@@ -312,9 +390,6 @@
          </property>
          <property name="suffix">
           <string>°</string>
-         </property>
-         <property name="toolTip">
-          <string>Angular tolerance for determining if an obstacle casts shadow on another</string>
          </property>
         </widget>
        </item>
@@ -332,12 +407,18 @@
          <property name="text">
           <string>Export to KMZ</string>
          </property>
+         <property name="toolTip">
+          <string>Export the TOFPA surface as a Google Earth KMZ file</string>
+         </property>
         </widget>
        </item>
        <item>
         <widget class="QCheckBox" name="exportToAixmCheckBox">
          <property name="text">
           <string>Export to AIXM 5.1.1</string>
+         </property>
+         <property name="toolTip">
+          <string>Export the TOFPA surface in AIXM 5.1.1 format for AIS submission</string>
          </property>
         </widget>
        </item>
@@ -377,6 +458,12 @@
         <property name="text">
          <string>Calculate</string>
         </property>
+        <property name="default">
+         <bool>true</bool>
+        </property>
+        <property name="toolTip">
+         <string>Run the TOFPA surface calculation (Enter)</string>
+        </property>
        </widget>
       </item>
       <item>
@@ -391,6 +478,28 @@
    </layout>
   </widget>
  </widget>
+ <tabstops>
+  <tabstop>runwayLayerCombo</tabstop>
+  <tabstop>thresholdLayerCombo</tabstop>
+  <tabstop>useSelectedFeatureCheckBox</tabstop>
+  <tabstop>includeObstaclesCheckBox</tabstop>
+  <tabstop>initialWidthSpin</tabstop>
+  <tabstop>maxWidthSpin</tabstop>
+  <tabstop>clearwayLengthSpin</tabstop>
+  <tabstop>initialElevationSpin</tabstop>
+  <tabstop>endElevationSpin</tabstop>
+  <tabstop>directionCombo</tabstop>
+  <tabstop>obstaclesLayerCombo</tabstop>
+  <tabstop>obstacleBufferSpin</tabstop>
+  <tabstop>obstacleHeightFieldCombo</tabstop>
+  <tabstop>minObstacleHeightSpin</tabstop>
+  <tabstop>enableShadowAnalysisCheckBox</tabstop>
+  <tabstop>shadowToleranceSpin</tabstop>
+  <tabstop>exportToKmzCheckBox</tabstop>
+  <tabstop>exportToAixmCheckBox</tabstop>
+  <tabstop>calculateButton</tabstop>
+  <tabstop>cancelButton</tabstop>
+ </tabstops>
  <customwidgets>
   <customwidget>
    <class>QgsMapLayerComboBox</class>
