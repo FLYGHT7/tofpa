@@ -14,28 +14,51 @@
  *                                                                         *
  ***************************************************************************/
 """
-from qgis.PyQt.QtCore import QCoreApplication, QVariant, Qt
+from qgis.PyQt.QtCore import QCoreApplication
 from qgis.PyQt.QtGui import QColor, QIcon
 from qgis.PyQt.QtWidgets import QFileDialog, QAction
-from qgis.core import (QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry, 
-                      QgsPoint, QgsField, QgsPolygon, QgsLineString, Qgis, 
+from .utils.compat import FIELD_INT, FIELD_STRING, DOCK_RIGHT  # MIGA-01, MIGA-05
+from qgis.core import (QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry,
+                      QgsPoint, QgsPointXY, QgsField, QgsPolygon, QgsLineString, Qgis,
                       QgsFillSymbol, QgsLineSymbol, QgsMarkerSymbol, QgsVectorFileWriter, QgsCoordinateTransform,
                       QgsCoordinateReferenceSystem, QgsWkbTypes)
 
+import logging
 import os.path
-from math import *
 
 # Import the dockwidget with error handling
 try:
     from .tofpa_dockwidget import TofpaDockWidget
 except ImportError as e:
-    print(f"Import error: {e}")
+    logger.error("Import error: %s", e)
     # Fallback import
     import sys
     import os
     plugin_dir = os.path.dirname(__file__)
     sys.path.insert(0, plugin_dir)
     from tofpa_dockwidget import TofpaDockWidget
+
+# Module logger
+logger = logging.getLogger('TOFPA')
+
+# Core modules — imported with relative/absolute fallback for QGIS plugin compatibility
+try:
+    from .core.models import ObstacleParams, TofpaParams
+    from .core.obstacles import ObstacleAnalyzer
+    from .utils.export import generate_aixm_file
+except ImportError:
+    from core.models import ObstacleParams, TofpaParams
+    from core.obstacles import ObstacleAnalyzer
+    from utils.export import generate_aixm_file
+
+# ---------------------------------------------------------------------------
+# ICAO Doc 8168 — TOFPA AOC Type A surface constants
+# ---------------------------------------------------------------------------
+TOFPA_DIVERGENCE_RATIO: float = 0.125    # 12.5% semi-width divergence per metre forward
+TOFPA_CLIMB_GRADIENT: float = 0.012     # 1.2% climb gradient
+TOFPA_SURFACE_LENGTH: float = 10_000.0  # Standard surface length in metres
+TOFPA_REF_LINE_HALF_WIDTH: float = 3_000.0  # Reference line half-width in metres
+
 
 class TOFPA:
     """QGIS Plugin Implementation."""
@@ -84,7 +107,7 @@ class TOFPA:
         self.actions.append(action)
         return action
 
-    def initGui(self):
+    def initGui(self) -> None:
         icon_path = os.path.join(self.plugin_dir, 'icon.png')
         self.add_action(
             icon_path,
@@ -93,7 +116,7 @@ class TOFPA:
             parent=self.iface.mainWindow())
         self.first_start = True
 
-    def unload(self):
+    def unload(self) -> None:
         for action in self.actions:
             self.iface.removePluginMenu(self.tr(u'&TOFPA'), action)
             self.iface.removeToolBarIcon(action)
@@ -102,12 +125,12 @@ class TOFPA:
             self.iface.removeDockWidget(self.panel)
             self.panel = None
 
-    def show_panel(self):
-        """Toggle the TOFPA dockwidget panel (show/hide)"""
+    def show_panel(self) -> None:
+        """Toggle the TOFPA dockwidget panel (show/hide)."""
         if not self.panel:
             # Create panel if it doesn't exist
             self.panel = TofpaDockWidget(self.iface)
-            self.iface.addDockWidget(Qt.RightDockWidgetArea, self.panel)
+            self.iface.addDockWidget(DOCK_RIGHT, self.panel)
             self.panel.calculateClicked.connect(self.on_calculate)
             self.panel.closeClicked.connect(self.on_close_panel)
             self.panel.show()
@@ -120,34 +143,21 @@ class TOFPA:
                 self.panel.show()
                 self.panel.raise_()
 
-    def on_close_panel(self):
-        """Hide the panel when close is clicked"""
+    def on_close_panel(self) -> None:
+        """Hide the panel when close is clicked."""
         if self.panel:
             self.panel.hide()
 
-    def on_calculate(self):
-        """Calculate TOFPA surface using parameters from the UI"""
-        params = self.panel.get_parameters()
-        success = self.create_tofpa_surface(
-            params['width_tofpa'],
-            params['max_width_tofpa'],
-            params['cwy_length'],
-            params['z0'],
-            params['ze'],
-            params['s'],
-            params['runway_layer_id'],
-            params['threshold_layer_id'],
-            params['use_selected_feature'],
-            params['export_kmz'],
-            params['export_aixm'],
-            params['include_obstacles'],
-            params['obstacles_layer_id'],
-            params['obstacle_height_field'],
-            params['obstacle_buffer'],
-            params['min_obstacle_height']
-        )
+    def on_calculate(self) -> None:
+        """Build parameter dataclasses from the UI and trigger surface calculation."""
+        raw = self.panel.get_parameters()
+        tofpa_params = TofpaParams.from_dict(raw)
+        obs_params = ObstacleParams.from_dict(raw)
+        success = self.create_tofpa_surface(tofpa_params, obs_params)
         if success:
-            self.iface.messageBar().pushMessage("TOFPA:", "TakeOff Climb Surface Calculation Finished", level=Qgis.Success)
+            self.iface.messageBar().pushMessage(
+                "TOFPA:", "TakeOff Climb Surface Calculation Finished", level=Qgis.Success
+            )
 
     def get_single_feature(self, layer, use_selected_feature, feature_type="feature"):
         """
@@ -185,17 +195,64 @@ class TOFPA:
                 return None
             elif len(all_features) == 0:
                 self.iface.messageBar().pushMessage(
-                    "Error", 
-                    f"No {feature_type}s found in layer '{layer.name()}'.", 
+                    "Error",
+                    f"No {feature_type}s found in layer '{layer.name()}'.",
                     level=Qgis.Critical
                 )
                 return None
+            # Fallback: no condition matched
+            return None
 
-    def create_tofpa_surface(self, width_tofpa, max_width_tofpa, cwy_length, z0, ze, s, 
-                            runway_layer_id, threshold_layer_id, use_selected_feature, export_kmz, export_aixm,
-                            include_obstacles, obstacles_layer_id, obstacle_height_field, obstacle_buffer, min_obstacle_height):
-        """Create the TOFPA surface with the given parameters - ORIGINAL LOGIC + OBSTACLES"""
-        
+    def _validate_params(self, params: TofpaParams) -> list[str]:
+        """
+        Validate TOFPA surface parameters before calculation.
+
+        Returns a (possibly empty) list of human-readable error strings.
+        An empty list means the parameters are valid.
+        """
+        errors: list[str] = []
+        if params.width_tofpa <= 0:
+            errors.append("Initial width must be greater than 0 m")
+        if params.max_width_tofpa < params.width_tofpa:
+            errors.append("Maximum width must be ≥ initial width")
+        if params.max_width_tofpa == params.width_tofpa:
+            errors.append("Max width equals initial width — surface will have no divergence")
+        if params.runway_layer_id is None:
+            errors.append("No runway layer selected")
+        if params.threshold_layer_id is None:
+            errors.append("No threshold layer selected")
+        return errors
+
+    def create_tofpa_surface(self, params: TofpaParams, obs_params: ObstacleParams) -> bool:
+        """Create the TOFPA AOC Type A surface and add it to the QGIS map. Returns True on success."""
+        # Validate before touching QGIS
+        errors = self._validate_params(params)
+        if errors:
+            self.iface.messageBar().pushMessage(
+                "TOFPA Validation", "; ".join(errors), level=Qgis.Critical
+            )
+            return False
+
+        # Unpack into local names — keeps the rest of the geometry code unchanged
+        width_tofpa = params.width_tofpa
+        max_width_tofpa = params.max_width_tofpa
+        cwy_length = params.cwy_length
+        z0 = params.z0
+        ze = params.ze
+        s = params.s
+        runway_layer_id = params.runway_layer_id
+        threshold_layer_id = params.threshold_layer_id
+        use_selected_feature = params.use_selected_feature
+        export_kmz = params.export_kmz
+        export_aixm = params.export_aixm
+        include_obstacles = obs_params.include_obstacles
+        obstacles_layer_id = obs_params.obstacles_layer_id
+        obstacle_height_field = obs_params.obstacle_height_field
+        obstacle_buffer = obs_params.obstacle_buffer
+        min_obstacle_height = obs_params.min_obstacle_height
+        enable_shadow_analysis = obs_params.enable_shadow_analysis
+        shadow_tolerance = obs_params.shadow_tolerance
+
         map_srid = self.iface.mapCanvas().mapSettings().destinationCrs().authid()
         
         # Get runway layer by ID
@@ -212,8 +269,10 @@ class TOFPA:
         # Get runway geometry (from original script)
         rwy_geom = runway_feature.geometry()
         rwy_length = rwy_geom.length()
-        rwy_slope = (z0-ze)/rwy_length if rwy_length > 0 else 0
-        print(f"Runway length: {rwy_length}")
+        # TODO (BUG-05): rwy_slope is calculated but never applied to surface point elevations.
+        # Verify with ICAO Doc 8168 whether runway slope should offset Z values of pt_01D/pt_02D/pt_03D.
+        rwy_slope = (z0 - ze) / rwy_length if rwy_length > 0 else 0  # noqa: F841
+        logger.debug("Runway length: %s", rwy_length)
         
         # Get the azimuth of the line (from original script)
         geom = runway_feature.geometry().asPolyline()
@@ -236,11 +295,11 @@ class TOFPA:
         azimuth = start_point.azimuth(end_point)  # azimuth in takeoff direction
         bazimuth = azimuth + 180  # opposite direction (backward from azimuth)
         
-        print(f"Start point: {start_point.x()}, {start_point.y()}")
-        print(f"End point: {end_point.x()}, {end_point.y()}")
-        print(f"Takeoff azimuth: {azimuth}")
-        print(f"Backward azimuth: {bazimuth}")
-        print(f"s parameter: {s}")
+        logger.debug("Start point: %s, %s", start_point.x(), start_point.y())
+        logger.debug("End point: %s, %s", end_point.x(), end_point.y())
+        logger.debug("Takeoff azimuth: %s", azimuth)
+        logger.debug("Backward azimuth: %s", bazimuth)
+        logger.debug("s parameter: %s", s)
         
         # Get the threshold point from selected layer
         threshold_layer = QgsProject.instance().mapLayer(threshold_layer_id)
@@ -257,9 +316,9 @@ class TOFPA:
         new_geom = QgsPoint(threshold_feature.geometry().asPoint())
         new_geom.addZValue(z0)
         
-        print(f"Threshold point: {new_geom.x()}, {new_geom.y()}, {new_geom.z()}")
-        print(f"Parameters - Width: {width_tofpa}, Max Width: {max_width_tofpa}")
-        print(f"CWY Length: {cwy_length}, Z0: {z0}, ZE: {ze}")
+        logger.debug("Threshold point: %s, %s, %s", new_geom.x(), new_geom.y(), new_geom.z())
+        logger.debug("Parameters - Width: %s, Max Width: %s", width_tofpa, max_width_tofpa)
+        logger.debug("CWY Length: %s, Z0: %s, ZE: %s", cwy_length, z0, ze)
         
         list_pts = []
         # Origin (from original script)
@@ -270,25 +329,25 @@ class TOFPA:
             dD = 0  # there is a condition to use the runway strip to analyze
         else:
             dD = cwy_length
-        print(f"dD (distance for surface start): {dD}")
+        logger.debug("dD (distance for surface start): %s", dD)
         
         # Calculate all points for the TOFPA surface using PROJECT method (ORIGINAL LOGIC)
         # First project backward from threshold to get the start point (if CWY length > 0)
         pt_01D = new_geom.project(dD, azimuth)  # Project from threshold by CWY length in the direction of the flight
         pt_01D.setZ(ze)
-        print(f"pt_01D (start point): {pt_01D.x()}, {pt_01D.y()}, {pt_01D.z()}")
+        logger.debug("pt_01D (start point): %s, %s, %s", pt_01D.x(), pt_01D.y(), pt_01D.z())
         pt_01DL = pt_01D.project(width_tofpa/2, azimuth+90)  # Use azimuth for perpendicular direction
         pt_01DR = pt_01D.project(width_tofpa/2, azimuth-90)  # Use azimuth for perpendicular direction
         
         # Distance to reach maximum width (from original script - ALL use azimuth for forward projection)
-        pt_02D = pt_01D.project(((max_width_tofpa/2-width_tofpa/2)/0.125), azimuth)
-        pt_02D.setZ(ze+((max_width_tofpa/2-width_tofpa/2)/0.125)*0.012)
+        pt_02D = pt_01D.project(((max_width_tofpa/2-width_tofpa/2)/TOFPA_DIVERGENCE_RATIO), azimuth)
+        pt_02D.setZ(ze+((max_width_tofpa/2-width_tofpa/2)/TOFPA_DIVERGENCE_RATIO)*TOFPA_CLIMB_GRADIENT)
         pt_02DL = pt_02D.project(max_width_tofpa/2, azimuth+90)  # Use azimuth for perpendicular
         pt_02DR = pt_02D.project(max_width_tofpa/2, azimuth-90)  # Use azimuth for perpendicular
         
         # Distance to end of TakeOff Climb Surface (from original script - ALL use azimuth for forward projection)
-        pt_03D = pt_01D.project(10000, azimuth)
-        pt_03D.setZ(ze+10000*0.012)
+        pt_03D = pt_01D.project(TOFPA_SURFACE_LENGTH, azimuth)
+        pt_03D.setZ(ze+TOFPA_SURFACE_LENGTH*TOFPA_CLIMB_GRADIENT)
         pt_03DL = pt_03D.project(max_width_tofpa/2, azimuth+90)  # Use azimuth for perpendicular
         pt_03DR = pt_03D.project(max_width_tofpa/2, azimuth-90)  # Use azimuth for perpendicular
         
@@ -299,20 +358,20 @@ class TOFPA:
         reference_start_point = pt_01D  # This is the calculated start point (considers CWY)
         
         # Create points 3000m on each side perpendicular to the azimuth
-        ref_line_left = reference_start_point.project(3000, azimuth+90)  # 3000m to the left
-        ref_line_right = reference_start_point.project(3000, azimuth-90)  # 3000m to the right
+        ref_line_left = reference_start_point.project(TOFPA_REF_LINE_HALF_WIDTH, azimuth+90)  # 3000m to the left
+        ref_line_right = reference_start_point.project(TOFPA_REF_LINE_HALF_WIDTH, azimuth-90)  # 3000m to the right
         
         # Set same elevation as start point
         ref_line_left.setZ(reference_start_point.z())
         ref_line_right.setZ(reference_start_point.z())
         
-        print(f"Reference line left point: {ref_line_left.x()}, {ref_line_left.y()}, {ref_line_left.z()}")
-        print(f"Reference line right point: {ref_line_right.x()}, {ref_line_right.y()}, {ref_line_right.z()}")
+        logger.debug("Reference line left point: %s, %s, %s", ref_line_left.x(), ref_line_left.y(), ref_line_left.z())
+        logger.debug("Reference line right point: %s, %s, %s", ref_line_right.x(), ref_line_right.y(), ref_line_right.z())
         
         # Create reference line memory layer
         ref_layer = QgsVectorLayer(f"LineStringZ?crs={map_srid}", "reference_line", "memory")
-        ref_id_field = QgsField('id', QVariant.Int)
-        ref_label_field = QgsField('txt-label', QVariant.String)
+        ref_id_field = QgsField('id', FIELD_INT)
+        ref_label_field = QgsField('txt-label', FIELD_STRING)
         ref_layer.dataProvider().addAttributes([ref_id_field, ref_label_field])
         ref_layer.updateFields()
         
@@ -337,8 +396,8 @@ class TOFPA:
         # Creation of the Take Off Climb Surfaces (from original script)
         # Create memory layer
         v_layer = QgsVectorLayer(f"PolygonZ?crs={map_srid}", "RWY_TOFPA_AOC_TypeA", "memory")
-        id_field = QgsField('ID', QVariant.String)
-        name_field = QgsField('SurfaceName', QVariant.String)
+        id_field = QgsField('ID', FIELD_STRING)
+        name_field = QgsField('SurfaceName', FIELD_STRING)
         v_layer.dataProvider().addAttributes([id_field])
         v_layer.dataProvider().addAttributes([name_field])
         v_layer.updateFields()
@@ -368,23 +427,30 @@ class TOFPA:
         if include_obstacles and obstacles_layer_id:
             try:
                 obstacles_info = self.process_survey_obstacles(
-                    obstacles_layer_id, 
-                    obstacle_height_field, 
-                    obstacle_buffer, 
-                    min_obstacle_height,
-                    v_layer,  # TOFPA surface for intersection analysis
-                    use_selected_feature
+                    obs_params,
+                    v_layer,      # TOFPA surface for intersection analysis
+                    use_selected_feature,
                 )
                 if obstacles_info:
                     obstacles_layers = obstacles_info['layers']
+                    
+                    # Create result message including shadow analysis if performed
+                    message = f"Analyzed {obstacles_info['total_obstacles']} obstacles, {obstacles_info['critical_obstacles']} are critical"
+                    
+                    if enable_shadow_analysis and 'shadow_results' in obstacles_info:
+                        shadow_results = obstacles_info['shadow_results']
+                        shadowed_count = len(shadow_results.get('shadowed_obstacles', []))
+                        visible_count = len([obs for obs in shadow_results.get('visible_obstacles', []) if obs.get('is_critical', False)])
+                        message += f", {shadowed_count} shadowed, {visible_count} visible"
+                    
                     # Display obstacles analysis results
                     self.iface.messageBar().pushMessage(
                         "Obstacles Analysis:", 
-                        f"Analyzed {obstacles_info['total_obstacles']} obstacles, "
-                        f"{obstacles_info['critical_obstacles']} are critical", 
+                        message, 
                         level=Qgis.Info
                     )
             except Exception as e:
+                logger.warning("Obstacles analysis failed: %s", e)
                 self.iface.messageBar().pushMessage(
                     "Warning", 
                     f"Obstacles analysis failed: {str(e)}", 
@@ -416,207 +482,97 @@ class TOFPA:
         
         return True
 
-    def process_survey_obstacles(self, obstacles_layer_id, height_field, buffer_distance, 
-                                min_height, tofpa_surface_layer, use_selected_feature):
+    def process_survey_obstacles(
+        self,
+        obs_params: ObstacleParams,
+        tofpa_surface_layer,
+        use_selected_feature: bool,
+    ) -> dict:
         """
-        Process survey obstacles and analyze their impact on TOFPA surface.
-        
-        This creates a separate model that works with survey obstacles while
-        a process is derived to run both analyses simultaneously to produce a final output.
+        Process survey obstacles and analyse their impact on the TOFPA surface.
+
+        Delegates all geometry / shadow work to ``ObstacleAnalyzer``; this method
+        only handles QGIS layer look-up and feature retrieval.
         """
-        # Get obstacles layer
-        obstacles_layer = QgsProject.instance().mapLayer(obstacles_layer_id)
+        obstacles_layer = QgsProject.instance().mapLayer(obs_params.obstacles_layer_id)
         if not obstacles_layer:
-            raise Exception("Selected obstacles layer not found!")
-        
-        # Validate height field
-        field_names = [field.name() for field in obstacles_layer.fields()]
-        if height_field and height_field not in field_names:
-            raise Exception(f"Height field '{height_field}' not found in obstacles layer!")
-        
-        # Get features to process
+            raise ValueError("Selected obstacles layer not found!")
+
+        field_names = [f.name() for f in obstacles_layer.fields()]
+        if obs_params.obstacle_height_field and obs_params.obstacle_height_field not in field_names:
+            raise ValueError(
+                f"Height field '{obs_params.obstacle_height_field}' not found in obstacles layer!"
+            )
+
         if use_selected_feature:
             features = obstacles_layer.selectedFeatures()
             if not features:
-                raise Exception("No obstacles selected in layer. Please select obstacles or uncheck 'Use selected features only'.")
+                raise ValueError(
+                    "No obstacles selected. Please select obstacles or uncheck "
+                    "'Use selected features only'."
+                )
         else:
             features = list(obstacles_layer.getFeatures())
-        
+
         if not features:
-            raise Exception("No obstacles found in layer.")
-        
-        # Create layers for obstacles analysis
-        layers_info = self._create_obstacles_layers(obstacles_layer.crs())
-        
-        # Process each obstacle
+            raise ValueError("No obstacles found in layer.")
+
+        analyzer = ObstacleAnalyzer()
+        layers_info = analyzer.create_layers(obstacles_layer.crs())
+
         critical_obstacles = 0
         total_obstacles = 0
-        
+        obstacles_data: list[dict] = []
+
         for feature in features:
             try:
-                obstacle_info = self._analyze_single_obstacle(
-                    feature, height_field, buffer_distance, min_height, 
-                    tofpa_surface_layer, layers_info
+                obstacle_info = analyzer.analyze_single(
+                    feature,
+                    obs_params.obstacle_height_field,
+                    obs_params.obstacle_buffer,
+                    obs_params.min_obstacle_height,
+                    tofpa_surface_layer,
+                    layers_info,
                 )
                 total_obstacles += 1
-                if obstacle_info['is_critical']:
+                if obstacle_info["is_critical"]:
                     critical_obstacles += 1
-            except Exception as e:
-                print(f"Warning: Failed to process obstacle feature {feature.id()}: {str(e)}")
-                continue
-        
-        # Add layers to map and style them
-        self._finalize_obstacles_layers(layers_info)
-        
+                obstacles_data.append({
+                    "feature": feature,
+                    "obstacle_info": obstacle_info,
+                    "point": obstacle_info["obstacle_point"],
+                    "height": obstacle_info["height"],
+                    "is_critical": obstacle_info["is_critical"],
+                })
+            except Exception as exc:
+                logger.warning("Failed to process obstacle feature %s: %s", feature.id(), exc)
+
+        shadow_results: dict = {"shadowed_obstacles": [], "visible_obstacles": obstacles_data}
+        if obs_params.enable_shadow_analysis:
+            shadow_results = analyzer.perform_shadow_analysis(
+                obstacles_data, tofpa_surface_layer, obs_params.shadow_tolerance
+            )
+            # BUG-02 fix: use actual buffer, not hardcoded 10.0
+            analyzer.apply_shadow_results(layers_info, shadow_results, obs_params.obstacle_buffer)
+
+        analyzer.finalize_layers(layers_info)
+
         return {
-            'layers': [layers_info['critical_layer'], layers_info['safe_layer'], layers_info['buffer_layer']],
-            'total_obstacles': total_obstacles,
-            'critical_obstacles': critical_obstacles
+            "layers": [
+                layers_info["critical_layer"],
+                layers_info["safe_layer"],
+                layers_info["buffer_layer"],
+                layers_info.get("shadowed_layer"),
+                layers_info.get("visible_layer"),
+            ],
+            "total_obstacles": total_obstacles,
+            "critical_obstacles": critical_obstacles,
+            "shadow_results": shadow_results,
         }
 
-    def _create_obstacles_layers(self, crs):
-        """Create memory layers for obstacles analysis"""
-        # Critical obstacles layer (red)
-        critical_layer = QgsVectorLayer(f"PointZ?crs={crs.authid()}", "Critical_Obstacles", "memory")
-        critical_fields = [
-            QgsField('id', QVariant.Int),
-            QgsField('height', QVariant.Double),
-            QgsField('buffer_m', QVariant.Double),
-            QgsField('status', QVariant.String),
-            QgsField('intersection', QVariant.String)
-        ]
-        critical_layer.dataProvider().addAttributes(critical_fields)
-        critical_layer.updateFields()
-        
-        # Safe obstacles layer (green)
-        safe_layer = QgsVectorLayer(f"PointZ?crs={crs.authid()}", "Safe_Obstacles", "memory")
-        safe_layer.dataProvider().addAttributes(critical_fields)
-        safe_layer.updateFields()
-        
-        # Buffer zones layer (yellow)
-        buffer_layer = QgsVectorLayer(f"PolygonZ?crs={crs.authid()}", "Obstacle_Buffers", "memory")
-        buffer_fields = [
-            QgsField('obstacle_id', QVariant.Int),
-            QgsField('buffer_m', QVariant.Double),
-            QgsField('status', QVariant.String)
-        ]
-        buffer_layer.dataProvider().addAttributes(buffer_fields)
-        buffer_layer.updateFields()
-        
-        return {
-            'critical_layer': critical_layer,
-            'safe_layer': safe_layer,
-            'buffer_layer': buffer_layer
-        }
 
-    def _analyze_single_obstacle(self, feature, height_field, buffer_distance, min_height, 
-                                tofpa_surface_layer, layers_info):
-        """Analyze a single obstacle against TOFPA surface"""
-        # Get obstacle geometry and height
-        geom = feature.geometry()
-        if not geom or geom.isEmpty():
-            raise Exception("Invalid geometry")
-        
-        # Get height from field or use minimum height
-        obstacle_height = min_height
-        if height_field:
-            height_value = feature.attribute(height_field)
-            if height_value is not None and isinstance(height_value, (int, float)):
-                obstacle_height = max(float(height_value), min_height)
-        
-        # Create point geometry with height
-        if geom.type() == QgsWkbTypes.PolygonGeometry:
-            # Use centroid for polygons
-            centroid = geom.centroid().asPoint()
-            obstacle_point = QgsPoint(centroid.x(), centroid.y(), obstacle_height)
-        else:
-            # Use point directly
-            point = geom.asPoint()
-            obstacle_point = QgsPoint(point.x(), point.y(), obstacle_height)
-        
-        # Create buffer around obstacle
-        buffer_geom = QgsGeometry.fromPointXY(QgsPoint(obstacle_point.x(), obstacle_point.y())).buffer(buffer_distance, 16)
-        
-        # Check intersection with TOFPA surface
-        is_critical = False
-        intersection_type = "None"
-        
-        for tofpa_feature in tofpa_surface_layer.getFeatures():
-            tofpa_geom = tofpa_feature.geometry()
-            if buffer_geom.intersects(tofpa_geom):
-                is_critical = True
-                intersection_type = "Buffer intersects TOFPA surface"
-                break
-        
-        # Add to appropriate layer
-        obstacle_feature = QgsFeature()
-        obstacle_feature.setGeometry(QgsGeometry(obstacle_point))
-        obstacle_feature.setAttributes([
-            int(feature.id()),
-            obstacle_height,
-            buffer_distance,
-            "CRITICAL" if is_critical else "SAFE",
-            intersection_type
-        ])
-        
-        # Add buffer feature
-        buffer_feature = QgsFeature()
-        buffer_feature.setGeometry(buffer_geom)
-        buffer_feature.setAttributes([
-            int(feature.id()),
-            buffer_distance,
-            "CRITICAL" if is_critical else "SAFE"
-        ])
-        
-        # Add to appropriate layers
-        if is_critical:
-            layers_info['critical_layer'].dataProvider().addFeatures([obstacle_feature])
-        else:
-            layers_info['safe_layer'].dataProvider().addFeatures([obstacle_feature])
-        
-        layers_info['buffer_layer'].dataProvider().addFeatures([buffer_feature])
-        
-        return {
-            'is_critical': is_critical,
-            'height': obstacle_height,
-            'intersection_type': intersection_type
-        }
-
-    def _finalize_obstacles_layers(self, layers_info):
-        """Add obstacles layers to map and apply styling"""
-        # Style critical obstacles (red)
-        critical_symbol = QgsMarkerSymbol.createSimple({
-            'color': '255,0,0,255',  # Red
-            'size': '4',
-            'outline_color': '0,0,0,255'
-        })
-        layers_info['critical_layer'].renderer().setSymbol(critical_symbol)
-        
-        # Style safe obstacles (green)
-        safe_symbol = QgsMarkerSymbol.createSimple({
-            'color': '0,255,0,255',  # Green
-            'size': '3',
-            'outline_color': '0,0,0,255'
-        })
-        layers_info['safe_layer'].renderer().setSymbol(safe_symbol)
-        
-        # Style buffer zones (yellow with transparency)
-        buffer_symbol = QgsFillSymbol.createSimple({
-            'color': '255,255,0,100',  # Yellow with transparency
-            'outline_color': '255,165,0,255',  # Orange outline
-            'outline_width': '0.3'
-        })
-        layers_info['buffer_layer'].renderer().setSymbol(buffer_symbol)
-        
-        # Add all layers to map
-        QgsProject.instance().addMapLayers([
-            layers_info['critical_layer'],
-            layers_info['safe_layer'], 
-            layers_info['buffer_layer']
-        ])
-
-    def export_to_kmz(self, layers):
-        """Export layers to KMZ format for Google Earth with proper styling"""
+    def export_to_kmz(self, layers: list) -> bool:
+        """Export layers to KMZ format for Google Earth with proper styling."""
         # Handle both single layer and list of layers
         if not isinstance(layers, list):
             layers = [layers]
@@ -720,6 +676,7 @@ class TOFPA:
             return True
             
         except Exception as e:
+            logger.error("Failed to create KMZ file: %s", e)
             self.iface.messageBar().pushMessage(
                 "Error", 
                 f"Failed to create KMZ file: {str(e)}", 
@@ -727,8 +684,8 @@ class TOFPA:
             )
             return False
 
-    def export_to_aixm(self, layers):
-        """Export layers to AIXM 5.1.1 format for aviation data exchange"""
+    def export_to_aixm(self, layers: list) -> bool:
+        """Export layers to AIXM 5.1.1 format for aviation data exchange."""
         # Handle both single layer and list of layers
         if not isinstance(layers, list):
             layers = [layers]
@@ -766,16 +723,17 @@ class TOFPA:
             file_path += '.xml'
         
         try:
-            self._generate_aixm_file(layers, file_path)
-            
+            generate_aixm_file(layers, file_path)
+
             self.iface.messageBar().pushMessage(
-                "Success", 
+                "Success",
                 f"Exported {len(layers)} layers to AIXM: {file_path}", 
                 level=Qgis.Success
             )
             return True
             
         except Exception as e:
+            logger.error("Failed to create AIXM file: %s", e)
             self.iface.messageBar().pushMessage(
                 "Error", 
                 f"Failed to create AIXM file: {str(e)}", 
@@ -783,177 +741,3 @@ class TOFPA:
             )
             return False
 
-    def _generate_aixm_file(self, layers, file_path):
-        """Generate AIXM 5.1.1 compliant XML file"""
-        import xml.etree.ElementTree as ET
-        from datetime import datetime
-        import uuid
-        
-        # Create root element with AIXM 5.1.1 namespace
-        root = ET.Element("aixm:AIXMBasicMessage")
-        root.set("xmlns:aixm", "http://www.aixm.aero/schema/5.1.1")
-        root.set("xmlns:gml", "http://www.opengis.net/gml/3.2")
-        root.set("xmlns:xlink", "http://www.w3.org/1999/xlink")
-        root.set("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
-        root.set("xsi:schemaLocation", "http://www.aixm.aero/schema/5.1.1 http://www.aixm.aero/schema/5.1.1/AIXM_BasicMessage.xsd")
-        
-        # Add message metadata
-        header = ET.SubElement(root, "gml:boundedBy")
-        ET.SubElement(header, "gml:Null").text = "unknown"
-        
-        # Add feature member for each layer
-        for layer in layers:
-            if layer.featureCount() == 0:
-                continue
-                
-            if "reference_line" in layer.name().lower():
-                self._add_aixm_reference_line(root, layer)
-            else:
-                self._add_aixm_surface(root, layer)
-        
-        # Write to file with proper formatting
-        tree = ET.ElementTree(root)
-        ET.indent(tree, space="  ", level=0)
-        tree.write(file_path, encoding='utf-8', xml_declaration=True)
-
-    def _add_aixm_surface(self, root, layer):
-        """Add TOFPA surface as AIXM NavigationArea"""
-        import xml.etree.ElementTree as ET
-        import uuid
-        from datetime import datetime
-        
-        for feature in layer.getFeatures():
-            # Create feature member
-            feature_member = ET.SubElement(root, "gml:featureMember")
-            nav_area = ET.SubElement(feature_member, "aixm:NavigationArea")
-            nav_area.set("gml:id", f"tofpa_surface_{uuid.uuid4().hex[:8]}")
-            
-            # Add time slice
-            time_slice = ET.SubElement(nav_area, "aixm:timeSlice")
-            nav_area_ts = ET.SubElement(time_slice, "aixm:NavigationAreaTimeSlice")
-            nav_area_ts.set("gml:id", f"ts_{uuid.uuid4().hex[:8]}")
-            
-            # Valid time
-            valid_time = ET.SubElement(nav_area_ts, "gml:validTime")
-            time_period = ET.SubElement(valid_time, "gml:TimePeriod")
-            time_period.set("gml:id", f"tp_{uuid.uuid4().hex[:8]}")
-            begin_pos = ET.SubElement(time_period, "gml:beginPosition")
-            begin_pos.text = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
-            end_pos = ET.SubElement(time_period, "gml:endPosition")
-            end_pos.set("indeterminatePosition", "unknown")
-            
-            # Interpretation
-            interpretation = ET.SubElement(nav_area_ts, "aixm:interpretation")
-            interpretation.text = "BASELINE"
-            
-            # Designator
-            designator = ET.SubElement(nav_area_ts, "aixm:designator")
-            designator.text = "TOFPA_AOC_TypeA"
-            
-            # Type
-            nav_type = ET.SubElement(nav_area_ts, "aixm:type")
-            nav_type.text = "TAKEOFF_CLIMB_SURFACE"
-            
-            # Geometry
-            geom = feature.geometry()
-            if geom and not geom.isEmpty():
-                self._add_aixm_geometry(nav_area_ts, geom)
-
-    def _add_aixm_reference_line(self, root, layer):
-        """Add reference line as AIXM Curve"""
-        import xml.etree.ElementTree as ET
-        import uuid
-        from datetime import datetime
-        
-        for feature in layer.getFeatures():
-            # Create feature member
-            feature_member = ET.SubElement(root, "gml:featureMember")
-            curve = ET.SubElement(feature_member, "aixm:Curve")
-            curve.set("gml:id", f"reference_line_{uuid.uuid4().hex[:8]}")
-            
-            # Add designator
-            designator = ET.SubElement(curve, "aixm:designator")
-            designator.text = "TOFPA_REFERENCE_LINE"
-            
-            # Geometry
-            geom = feature.geometry()
-            if geom and not geom.isEmpty():
-                self._add_aixm_geometry(curve, geom)
-
-    def _add_aixm_geometry(self, parent, geometry):
-        """Add geometry to AIXM element in GML format"""
-        import xml.etree.ElementTree as ET
-        
-        # Transform to WGS84 for AIXM compliance
-        crs_4326 = QgsCoordinateReferenceSystem("EPSG:4326")
-        transform = QgsCoordinateTransform(
-            geometry.crs() if hasattr(geometry, 'crs') else QgsProject.instance().crs(),
-            crs_4326,
-            QgsProject.instance()
-        )
-        
-        geom_4326 = QgsGeometry(geometry)
-        geom_4326.transform(transform)
-        
-        if geometry.type() == QgsWkbTypes.PolygonGeometry:
-            self._add_gml_surface(parent, geom_4326)
-        elif geometry.type() == QgsWkbTypes.LineGeometry:
-            self._add_gml_curve(parent, geom_4326)
-
-    def _add_gml_surface(self, parent, geometry):
-        """Add GML Surface geometry"""
-        import xml.etree.ElementTree as ET
-        
-        geom_elem = ET.SubElement(parent, "aixm:geometryComponent")
-        surface = ET.SubElement(geom_elem, "aixm:Surface")
-        surface.set("gml:id", f"srf_{hash(str(geometry.asWkt())) & 0x7fffffff}")
-        surface.set("srsName", "urn:ogc:def:crs:EPSG::4326")
-        surface.set("srsDimension", "3")
-        
-        patches = ET.SubElement(surface, "gml:patches")
-        polygon_patch = ET.SubElement(patches, "gml:PolygonPatch")
-        
-        # Exterior boundary
-        exterior = ET.SubElement(polygon_patch, "gml:exterior")
-        linear_ring = ET.SubElement(exterior, "gml:LinearRing")
-        pos_list = ET.SubElement(linear_ring, "gml:posList")
-        
-        # Get coordinates
-        if geometry.isMultipart():
-            polygon = geometry.asMultiPolygon()[0][0]  # First polygon, exterior ring
-        else:
-            polygon = geometry.asPolygon()[0]  # Exterior ring
-            
-        coords = []
-        for point in polygon:
-            # AIXM uses lat,lon,alt order
-            coords.extend([f"{point.y():.8f}", f"{point.x():.8f}", f"{point.z():.3f}" if point.is3D() else "0.000"])
-        
-        pos_list.text = " ".join(coords)
-
-    def _add_gml_curve(self, parent, geometry):
-        """Add GML Curve geometry"""
-        import xml.etree.ElementTree as ET
-        
-        geom_elem = ET.SubElement(parent, "aixm:geometryComponent")
-        curve = ET.SubElement(geom_elem, "aixm:Curve")
-        curve.set("gml:id", f"crv_{hash(str(geometry.asWkt())) & 0x7fffffff}")
-        curve.set("srsName", "urn:ogc:def:crs:EPSG::4326")
-        curve.set("srsDimension", "3")
-        
-        segments = ET.SubElement(curve, "gml:segments")
-        line_segment = ET.SubElement(segments, "gml:LineStringSegment")
-        pos_list = ET.SubElement(line_segment, "gml:posList")
-        
-        # Get coordinates
-        if geometry.isMultipart():
-            line = geometry.asMultiPolyline()[0]  # First line
-        else:
-            line = geometry.asPolyline()
-            
-        coords = []
-        for point in line:
-            # AIXM uses lat,lon,alt order
-            coords.extend([f"{point.y():.8f}", f"{point.x():.8f}", f"{point.z():.3f}" if point.is3D() else "0.000"])
-        
-        pos_list.text = " ".join(coords)

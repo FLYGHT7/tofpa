@@ -279,6 +279,45 @@
          </property>
         </widget>
        </item>
+       <item row="3" column="0" colspan="2">
+        <widget class="QCheckBox" name="enableShadowAnalysisCheckBox">
+         <property name="text">
+          <string>Enable shadow analysis</string>
+         </property>
+         <property name="toolTip">
+          <string>Analyze which critical obstacles are shadowed by others closer to takeoff point</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="0">
+        <widget class="QLabel" name="shadowToleranceLabel">
+         <property name="text">
+          <string>Shadow Tolerance (°):</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="1">
+        <widget class="QDoubleSpinBox" name="shadowToleranceSpin">
+         <property name="minimum">
+          <double>0.500000000000000</double>
+         </property>
+         <property name="maximum">
+          <double>30.000000000000000</double>
+         </property>
+         <property name="decimals">
+          <number>1</number>
+         </property>
+         <property name="value">
+          <double>5.0</double>
+         </property>
+         <property name="suffix">
+          <string>°</string>
+         </property>
+         <property name="toolTip">
+          <string>Angular tolerance for determining if an obstacle casts shadow on another</string>
+         </property>
+        </widget>
+       </item>
       </layout>
      </widget>
     </item>

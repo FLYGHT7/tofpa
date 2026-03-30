@@ -4,12 +4,19 @@ FLYGHT7
 import os
 
 from qgis.PyQt import uic
-from qgis.PyQt.QtCore import pyqtSignal, Qt, QVariant
+from qgis.PyQt.QtCore import pyqtSignal
 from qgis.PyQt.QtWidgets import QDockWidget
 from qgis.core import QgsMapLayerProxyModel, QgsWkbTypes
+from .utils.compat import (  # MIGA-01, MIGA-02
+    FIELD_INT, FIELD_DOUBLE,
+    WKB_LINE_GEOM, WKB_POINT_GEOM, WKB_POLYGON_GEOM,
+    LAYER_FILTER_VECTOR,
+)
 
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'tofpa_panel_base.ui'))
+
+logger = logging.getLogger('TOFPA.ui')
 
 
 class TofpaDockWidget(QDockWidget, FORM_CLASS):
@@ -25,15 +32,15 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         
         # Configure layer combo boxes with specific geometry filters
         # Runway Layer: Only LineString geometries (lines)
-        self.runwayLayerCombo.setFilters(QgsMapLayerProxyModel.VectorLayer)
+        self.runwayLayerCombo.setFilters(LAYER_FILTER_VECTOR)
         self.runwayLayerCombo.setExceptedLayerList([])
         
         # Threshold Layer: Only Point geometries  
-        self.thresholdLayerCombo.setFilters(QgsMapLayerProxyModel.VectorLayer)
+        self.thresholdLayerCombo.setFilters(LAYER_FILTER_VECTOR)
         self.thresholdLayerCombo.setExceptedLayerList([])
         
         # Obstacles Layer: Point or Polygon geometries
-        self.obstaclesLayerCombo.setFilters(QgsMapLayerProxyModel.VectorLayer)
+        self.obstaclesLayerCombo.setFilters(LAYER_FILTER_VECTOR)
         self.obstaclesLayerCombo.setExceptedLayerList([])
         
         # Apply geometry-specific filters
@@ -45,7 +52,7 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             QgsProject.instance().layersAdded.connect(self._on_layers_changed)
             QgsProject.instance().layersRemoved.connect(self._on_layers_changed)
         except Exception:
-            pass  # Fallback if QGIS not available
+            logger.debug("QGIS layers signal connection failed - running outside QGIS", exc_info=True)
         
         # Connect obstacles layer change to update height field combo
         self.obstaclesLayerCombo.layerChanged.connect(self._update_obstacle_fields)
@@ -69,8 +76,16 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         self.obstacleBufferSpin.setValue(10.0)
         self.minObstacleHeightSpin.setValue(5.0)
         
+        # Set default values for shadow analysis
+        self.enableShadowAnalysisCheckBox.setChecked(False)
+        self.shadowToleranceSpin.setValue(5.0)
+        
+        # Connect shadow analysis checkbox to enable/disable shadow tolerance control
+        self.enableShadowAnalysisCheckBox.toggled.connect(self._toggle_shadow_controls)
+        
         # Initialize obstacles group as disabled
         self._toggle_obstacles_group(False)
+        self._toggle_shadow_controls(False)
         
         # Connect signals
         self.calculateButton.clicked.connect(self.on_calculate_clicked)
@@ -94,18 +109,19 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
                 geom_type = layer.geometryType()
                 
                 # For runway combo: exclude non-line layers
-                if geom_type != QgsWkbTypes.LineGeometry:
+                if geom_type != WKB_LINE_GEOM:
                     non_line_layers.append(layer)
                 
                 # For threshold combo: exclude non-point layers  
-                if geom_type != QgsWkbTypes.PointGeometry:
+                if geom_type != WKB_POINT_GEOM:
                     non_point_layers.append(layer)
                 
                 # For obstacles combo: exclude non-point and non-polygon layers
-                if geom_type not in [QgsWkbTypes.PointGeometry, QgsWkbTypes.PolygonGeometry]:
+                if geom_type not in [WKB_POINT_GEOM, WKB_POLYGON_GEOM]:
                     non_obstacle_layers.append(layer)
                     
-            except Exception as e:
+            except Exception:
+                logger.debug("Could not determine geometry type for layer, excluding from all combos", exc_info=True)
                 # If we can't determine geometry type, exclude from all
                 non_line_layers.append(layer)
                 non_point_layers.append(layer)
@@ -123,7 +139,7 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             # Also update obstacle fields if obstacles layer is selected
             self._update_obstacle_fields()
         except Exception:
-            pass  # Fallback if filtering fails
+            logger.debug("Geometry filter application failed", exc_info=True)
 
     def _update_obstacle_fields(self):
         """Update the obstacle height field combo box based on selected layer"""
@@ -134,7 +150,7 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             if layer:
                 # Add numeric fields to the combo
                 for field in layer.fields():
-                    if field.type() in [QVariant.Int, QVariant.Double]:
+                    if field.type() in [FIELD_INT, FIELD_DOUBLE]:
                         self.obstacleHeightFieldCombo.addItem(field.name())
                         
                 # Set default common field names if available
@@ -145,7 +161,7 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
                         self.obstacleHeightFieldCombo.setCurrentIndex(index)
                         break
         except Exception:
-            pass  # Fallback if field update fails
+            logger.debug("Obstacle height field update failed", exc_info=True)
 
     def _toggle_obstacles_group(self, enabled):
         """Enable or disable the obstacles group based on checkbox state"""
@@ -154,8 +170,32 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             if not enabled:
                 # Clear obstacles layer selection when disabled
                 self.obstaclesLayerCombo.setCurrentIndex(-1)
+                # Also disable shadow analysis when obstacles are disabled
+                self.enableShadowAnalysisCheckBox.setChecked(False)
+            
+            # Update shadow controls based on obstacles state
+            self._toggle_shadow_controls(self.enableShadowAnalysisCheckBox.isChecked())
         except Exception:
-            pass  # Fallback if toggle fails
+            logger.debug("Toggle obstacles group failed", exc_info=True)
+
+    def _toggle_shadow_controls(self, enabled):
+        """Enable or disable shadow analysis controls based on checkbox state"""
+        try:
+            # Shadow analysis is only available when obstacles analysis is enabled
+            obstacles_enabled = self.includeObstaclesCheckBox.isChecked()
+            final_enabled = enabled and obstacles_enabled
+            
+            self.shadowToleranceLabel.setEnabled(final_enabled)
+            self.shadowToleranceSpin.setEnabled(final_enabled)
+            
+            # If obstacles are not enabled, disable shadow analysis checkbox
+            if not obstacles_enabled:
+                self.enableShadowAnalysisCheckBox.setEnabled(False)
+                self.enableShadowAnalysisCheckBox.setChecked(False)
+            else:
+                self.enableShadowAnalysisCheckBox.setEnabled(True)
+        except Exception:
+            logger.debug("Toggle shadow controls failed", exc_info=True)
 
     def on_calculate_clicked(self):
         """Emit signal when calculate button is clicked"""
@@ -187,7 +227,10 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             'obstacles_layer_id': self.obstaclesLayerCombo.currentLayer().id() if self.obstaclesLayerCombo.currentLayer() and self.includeObstaclesCheckBox.isChecked() else None,
             'obstacle_height_field': self.obstacleHeightFieldCombo.currentText() if self.includeObstaclesCheckBox.isChecked() else None,
             'obstacle_buffer': self.obstacleBufferSpin.value(),
-            'min_obstacle_height': self.minObstacleHeightSpin.value()
+            'min_obstacle_height': self.minObstacleHeightSpin.value(),
+            # New shadow analysis parameters
+            'enable_shadow_analysis': self.enableShadowAnalysisCheckBox.isChecked() and self.includeObstaclesCheckBox.isChecked(),
+            'shadow_tolerance': self.shadowToleranceSpin.value()
         }
 
     def closeEvent(self, event):
