@@ -397,6 +397,47 @@
      </widget>
     </item>
     <item>
+     <widget class="QGroupBox" name="contoursGroup">
+      <property name="title">
+       <string>Contours</string>
+      </property>
+      <layout class="QFormLayout" name="formLayout_contours">
+       <item row="0" column="0">
+        <widget class="QLabel" name="contourIntervalLabel">
+         <property name="text">
+          <string>Contour Interval (m):</string>
+         </property>
+         <property name="toolTip">
+          <string>Generate elevation contour lines every X metres. Set to 0 to disable. Lines are labelled with the surface elevation value.</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QSpinBox" name="contourIntervalSpin">
+         <property name="toolTip">
+          <string>Generate elevation contour lines every X metres. Set to 0 to disable.</string>
+         </property>
+         <property name="minimum">
+          <number>0</number>
+         </property>
+         <property name="maximum">
+          <number>500</number>
+         </property>
+         <property name="singleStep">
+          <number>10</number>
+         </property>
+         <property name="value">
+          <number>0</number>
+         </property>
+         <property name="suffix">
+          <string> m</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
      <widget class="QGroupBox" name="exportGroup">
       <property name="title">
        <string>Export Options</string>
@@ -495,6 +536,7 @@
   <tabstop>minObstacleHeightSpin</tabstop>
   <tabstop>enableShadowAnalysisCheckBox</tabstop>
   <tabstop>shadowToleranceSpin</tabstop>
+  <tabstop>contourIntervalSpin</tabstop>
   <tabstop>exportToKmzCheckBox</tabstop>
   <tabstop>exportToAixmCheckBox</tabstop>
   <tabstop>calculateButton</tabstop>

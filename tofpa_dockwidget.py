@@ -331,7 +331,9 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             'min_obstacle_height': self.minObstacleHeightSpin.value(),
             # New shadow analysis parameters
             'enable_shadow_analysis': self.enableShadowAnalysisCheckBox.isChecked() and self.includeObstaclesCheckBox.isChecked(),
-            'shadow_tolerance': self.shadowToleranceSpin.value()
+            'shadow_tolerance': self.shadowToleranceSpin.value(),
+            # Contour generation (issue #27)
+            'contour_interval_m': int(round(self.contourIntervalSpin.value())),
         }
 
     def closeEvent(self, event):
