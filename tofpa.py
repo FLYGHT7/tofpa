@@ -17,11 +17,12 @@
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.PyQt.QtGui import QColor, QIcon
 from qgis.PyQt.QtWidgets import QFileDialog, QAction
-from .utils.compat import FIELD_INT, FIELD_STRING, DOCK_RIGHT  # MIGA-01, MIGA-05
+from .utils.compat import FIELD_INT, FIELD_STRING, FIELD_DOUBLE, DOCK_RIGHT  # MIGA-01, MIGA-05
 from qgis.core import (QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry,
                       QgsPoint, QgsPointXY, QgsField, QgsPolygon, QgsLineString, Qgis,
                       QgsFillSymbol, QgsLineSymbol, QgsMarkerSymbol, QgsVectorFileWriter, QgsCoordinateTransform,
-                      QgsCoordinateReferenceSystem, QgsWkbTypes)
+                      QgsCoordinateReferenceSystem, QgsWkbTypes,
+                      QgsPalLayerSettings, QgsVectorLayerSimpleLabeling)
 
 import logging
 import os.path
@@ -45,10 +46,12 @@ logger = logging.getLogger('TOFPA')
 try:
     from .core.models import ObstacleParams, TofpaParams
     from .core.obstacles import ObstacleAnalyzer
+    from .core._contour_utils import contour_elevations, contour_specs_for_takeoff
     from .utils.export import generate_aixm_file
 except ImportError:
     from core.models import ObstacleParams, TofpaParams
     from core.obstacles import ObstacleAnalyzer
+    from core._contour_utils import contour_elevations, contour_specs_for_takeoff
     from utils.export import generate_aixm_file
 
 # ---------------------------------------------------------------------------
@@ -428,6 +431,62 @@ class TOFPA:
         v_layer.renderer().setSymbol(symbol)
         v_layer.triggerRepaint()
         
+        # Contour layer generation (issue #27)
+        if params.contour_interval_m > 0:
+            _dist_to_max_w = (max_width_tofpa / 2 - width_tofpa / 2) / TOFPA_DIVERGENCE_RATIO
+            _z_surface_end = ze + TOFPA_SURFACE_LENGTH * TOFPA_CLIMB_GRADIENT
+            _elevs = contour_elevations(ze, _z_surface_end, params.contour_interval_m)
+            _all_specs = contour_specs_for_takeoff(
+                z_start=ze,
+                slope_ratio=TOFPA_CLIMB_GRADIENT,
+                distance_to_max_width=_dist_to_max_w,
+                surface_length=TOFPA_SURFACE_LENGTH,
+                near_half_width=width_tofpa / 2,
+                max_half_width=max_width_tofpa / 2,
+                divergence_ratio=TOFPA_DIVERGENCE_RATIO,
+                elevations=_elevs,
+            )
+            if _all_specs:
+                _clayer = QgsVectorLayer(
+                    f"LineStringZ?crs={map_srid}",
+                    "RWY_TOFPA_Contours",
+                    "memory",
+                )
+                _clayer.dataProvider().addAttributes([
+                    QgsField('ID', FIELD_INT),
+                    QgsField('surface_elevation', FIELD_DOUBLE),
+                ])
+                _clayer.updateFields()
+
+                _cfeats = []
+                for _i, _spec in enumerate(_all_specs):
+                    _ctr = pt_01D.project(_spec.distance_from_origin, azimuth)
+                    _l2d = _ctr.project(_spec.half_width, azimuth + 90)
+                    _r2d = _ctr.project(_spec.half_width, azimuth - 90)
+                    _lpt = QgsPoint(_l2d.x(), _l2d.y(), _spec.elevation)
+                    _rpt = QgsPoint(_r2d.x(), _r2d.y(), _spec.elevation)
+                    _feat = QgsFeature()
+                    _feat.setGeometry(QgsGeometry(QgsLineString([_lpt, _rpt])))
+                    _feat.setAttributes([_i + 1, _spec.elevation])
+                    _cfeats.append(_feat)
+                _clayer.dataProvider().addFeatures(_cfeats)
+
+                _sym = QgsLineSymbol.createSimple({'color': 'red', 'width': '0.5'})
+                _clayer.renderer().setSymbol(_sym)
+
+                _pal = QgsPalLayerSettings()
+                _pal.fieldName = 'surface_elevation'
+                _pal.enabled = True
+                _clayer.setLabeling(QgsVectorLayerSimpleLabeling(_pal))
+                _clayer.setLabelsEnabled(True)
+
+                QgsProject.instance().addMapLayers([_clayer])
+                _clayer.triggerRepaint()
+                logger.debug(
+                    "Contour layer added — %d lines at %dm interval",
+                    len(_cfeats), params.contour_interval_m,
+                )
+
         # Process survey obstacles if requested
         obstacles_layers = []
         if include_obstacles and obstacles_layer_id:

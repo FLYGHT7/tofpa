@@ -48,6 +48,9 @@ class TofpaParams:
     export_kmz: bool
     export_aixm: bool
 
+    # Contour generation (issue #27) — 0 = disabled
+    contour_interval_m: int = 0
+
     @classmethod
     def from_dict(cls, d: dict) -> "TofpaParams":
         """Build from the dict returned by ``TofpaDockWidget.get_parameters()``."""
@@ -63,6 +66,7 @@ class TofpaParams:
             use_selected_feature=bool(d.get("use_selected_feature", True)),
             export_kmz=bool(d.get("export_kmz", False)),
             export_aixm=bool(d.get("export_aixm", False)),
+            contour_interval_m=int(d.get("contour_interval_m", 0)),
         )
 
 
