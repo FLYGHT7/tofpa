@@ -70,12 +70,15 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         scroll = QScrollArea()
         scroll.setObjectName("tofpaScrollArea")
         scroll.setWidgetResizable(True)
-        try:
-            from qgis.PyQt.QtCore import Qt
-            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.AlwaysOff)
-        except AttributeError:
-            from qgis.PyQt.QtCore import Qt
-            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # type: ignore[attr-defined]
+        from qgis.PyQt.QtCore import Qt
+        # Qt6 (QGIS 4): Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        # Qt5 (QGIS 3): Qt.ScrollBarAlwaysOff
+        _policy = (
+            getattr(Qt.ScrollBarPolicy, "ScrollBarAlwaysOff", None)  # Qt6
+            or getattr(Qt, "ScrollBarAlwaysOff", None)               # Qt5
+        )
+        if _policy is not None:
+            scroll.setHorizontalScrollBarPolicy(_policy)
         scroll.setWidget(self.dockWidgetContents)
         self.setWidget(scroll)
 
