@@ -151,6 +151,47 @@ class TOFPA:
         if self.panel:
             self.panel.hide()
 
+    def _apply_contour_style(self, layer) -> bool:
+        """Apply contour style to *layer*, preferring the bundled QML file.
+
+        Tries to load ``styles/contour_styling.qml`` from the plugin directory.
+        If the file is missing or cannot be parsed, falls back to a hardcoded
+        red 0.5-pt line with a plain ``surface_elevation`` label.
+
+        Returns:
+            True  — QML style was loaded successfully.
+            False — Fallback hardcoded style was applied.
+        """
+        qml_path = os.path.join(self.plugin_dir, 'styles', 'contour_styling.qml')
+        if os.path.isfile(qml_path):
+            try:
+                msg, ok = layer.loadNamedStyle(qml_path)
+                if ok:
+                    layer.setLabelsEnabled(True)
+                    logger.debug("Contour style loaded from QML: %s", qml_path)
+                    return True
+                logger.warning(
+                    "QML style parse failed for contour layer ('%s') — using fallback", msg
+                )
+            except Exception as exc:
+                logger.warning(
+                    "QML style load error ('%s') — using fallback: %s", qml_path, exc
+                )
+        else:
+            logger.debug(
+                "contour_styling.qml not found at '%s' — using fallback", qml_path
+            )
+
+        # Fallback: hardcoded red line + minimal label
+        _sym = QgsLineSymbol.createSimple({'color': 'red', 'width': '0.5'})
+        layer.renderer().setSymbol(_sym)
+        _pal = QgsPalLayerSettings()
+        _pal.fieldName = 'surface_elevation'
+        _pal.enabled = True
+        layer.setLabeling(QgsVectorLayerSimpleLabeling(_pal))
+        layer.setLabelsEnabled(True)
+        return False
+
     def on_calculate(self) -> None:
         """Build parameter dataclasses from the UI and trigger surface calculation."""
         raw = self.panel.get_parameters()
@@ -471,14 +512,7 @@ class TOFPA:
                     _cfeats.append(_feat)
                 _clayer.dataProvider().addFeatures(_cfeats)
 
-                _sym = QgsLineSymbol.createSimple({'color': 'red', 'width': '0.5'})
-                _clayer.renderer().setSymbol(_sym)
-
-                _pal = QgsPalLayerSettings()
-                _pal.fieldName = 'surface_elevation'
-                _pal.enabled = True
-                _clayer.setLabeling(QgsVectorLayerSimpleLabeling(_pal))
-                _clayer.setLabelsEnabled(True)
+                self._apply_contour_style(_clayer)
 
                 QgsProject.instance().addMapLayers([_clayer])
                 _clayer.triggerRepaint()
